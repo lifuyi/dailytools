@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xiaohongshu Content Downloader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📱 Xiaohongshu Content Downloader</h1>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="number" id="total-posts">0</div>
+                    <div class="label">Total Posts</div>
+                </div>
+                <div class="stat-item">
+                    <div class="number" id="total-images">0</div>
+                    <div class="label">Images</div>
+                </div>
+                <div class="stat-item">
+                    <div class="number" id="total-videos">0</div>
+                    <div class="label">Videos</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="controls">
+            <input type="file" id="file-input" accept=".json" onchange="handleFileUpload(event)">
+            <input type="text" id="search-input" placeholder="Search by title, description, or tags...">
+            <select id="type-filter">
+                <option value="all">All Types</option>
+                <option value="video">Videos</option>
+                <option value="normal">Images Only</option>
+            </select>
+            <select id="time-filter">
+                <option value="all">All Time</option>
+                <option value="1month">Last 1 Month</option>
+                <option value="3months">Last 3 Months</option>
+                <option value="6months">Last 6 Months</option>
+                <option value="1year">Last 1 Year</option>
+            </select>
+            <select id="sort-filter">
+                <option value="latest">Latest First</option>
+                <option value="oldest">Oldest First</option>
+            </select>
+            <button class="btn btn-primary" onclick="filterContent()">🔍 Search</button>
+        </div>
+        <div class="grid" id="content-grid"></div>
+    </div>
+
+    <div class="progress-container" id="progress-container">
+        <div id="progress-message">Downloading...</div>
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-text" id="progress-text">0 / 0</div>
+    </div>
+
+    <script>
+        let allData = [];
+        let filteredData = [];
+
+        // Load JSON data from uploaded file
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    allData = JSON.parse(e.target.result);
+                    filteredData = [...allData];
+                    updateStats();
+                    renderContent();
+                } catch (error) {
+                    console.error('Error parsing JSON:', error);
+                    document.getElementById('content-grid').innerHTML = 
+                        '<div class="no-results">Error parsing JSON file. Please make sure it\'s a valid JSON file.</div>';
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function updateStats() {
+            const totalPosts = filteredData.length;
+            let totalImages = 0;
+            let totalVideos = 0;
+
+            filteredData.forEach(item => {
+                if (item.type === 'video') totalVideos++;
+                if (item.image_list) {
+                    totalImages += item.image_list.split(',').length;
+                }
+            });
+
+            document.getElementById('total-posts').textContent = totalPosts;
+            document.getElementById('total-images').textContent = totalImages;
+            document.getElementById('total-videos').textContent = totalVideos;
+        }
+
+        function filterContent() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            const typeFilter = document.getElementById('type-filter').value;
+            const timeFilter = document.getElementById('time-filter').value;
+            const sortFilter = document.getElementById('sort-filter').value;
+
+            const now = new Date();
+            let timeThreshold = null;
+
+            if (timeFilter !== 'all') {
+                switch (timeFilter) {
+                    case '1month':
+                        timeThreshold = new Date(now.setMonth(now.getMonth() - 1));
+                        break;
+                    case '3months':
+                        timeThreshold = new Date(now.setMonth(now.getMonth() - 3));
+                        break;
+                    case '6months':
+                        timeThreshold = new Date(now.setMonth(now.getMonth() - 6));
+                        break;
+                    case '1year':
+                        timeThreshold = new Date(now.setFullYear(now.getFullYear() - 1));
+                        break;
+                }
+            }
+
+            filteredData = allData.filter(item => {
+                const matchesSearch = !searchTerm || 
+                    item.title.toLowerCase().includes(searchTerm) ||
+                    item.desc.toLowerCase().includes(searchTerm) ||
+                    item.tag_list.toLowerCase().includes(searchTerm) ||
+                    item.nickname.toLowerCase().includes(searchTerm);
+                
+                const matchesType = typeFilter === 'all' || item.type === typeFilter;
+                
+                let matchesTime = true;
+                if (timeThreshold) {
+                    const itemDate = new Date(item.time);
+                    matchesTime = itemDate >= timeThreshold;
+                }
+                
+                return matchesSearch && matchesType && matchesTime;
+            });
+
+            // Sort by time
+            filteredData.sort((a, b) => {
+                const dateA = new Date(a.time);
+                const dateB = new Date(b.time);
+                return sortFilter === 'latest' ? dateB - dateA : dateA - dateB;
+            });
+
+            updateStats();
+            renderContent();
+        }
+
+        function formatDate(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
+        }
+
+        function formatNumber(num) {
+            if (!num) return '0';
+            return parseInt(num).toLocaleString();
+        }
+
+        function renderContent() {
+            const grid = document.getElementById('content-grid');
+            
+            if (filteredData.length === 0) {
+                grid.innerHTML = '<div class="no-results">No results found. Try adjusting your search criteria.</div>';
+                return;
+            }
+
+            grid.innerHTML = filteredData.map(item => `
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">${item.title}</div>
+                        <div class="card-meta">
+                            <img src="${item.avatar}" alt="${item.nickname}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%23ddd%22/><text x=%2250%22 y=%2255%22 font-size=%2230%22 text-anchor=%22middle%22 fill=%22%23666%22>${item.nickname[0]}</text></svg>'">
+                            <span>${item.nickname}</span>
+                            ${item.ip_location ? `<span>• ${item.ip_location}</span>` : ''}
+                            <span class="post-time">🕐 ${formatDate(item.time)}</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-stats">
+                            <div class="stat">❤️ ${formatNumber(item.liked_count)}</div>
+                            <div class="stat">⭐ ${formatNumber(item.collected_count)}</div>
+                            <div class="stat">💬 ${formatNumber(item.comment_count)}</div>
+                            <div class="stat">📤 ${formatNumber(item.share_count)}</div>
+                        </div>
+                        <div class="card-tags">
+                            ${item.tag_list.split(',').slice(0, 5).map(tag => 
+                                `<a href="https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(tag.trim())}" target="_blank" class="tag">${tag.trim()}</a>`
+                            ).join('')}
+                        </div>
+                        <div class="card-desc">${item.desc.replace(/\n/g, ' ')}</div>
+                        
+                        <div class="resources-section">
+                            <div class="resources-title">📎 Resources</div>
+                            <div class="resource-list">
+                                ${item.video_url ? `
+                                    <div class="resource-item">
+                                        <img src="${item.video_url}" class="resource-preview" alt="Video thumbnail" onerror="this.style.display='none'">
+                                        <span class="resource-url">🎬 Video</span>
+                                        <button class="resource-btn" onclick="downloadResource('${item.video_url}', '${item.note_id}_video.mp4')">Download</button>
+                                    </div>
+                                ` : ''}
+                                ${item.image_list ? item.image_list.split(',').map((img, idx) => `
+                                    <div class="resource-item">
+                                        <img src="${img.trim()}" class="resource-preview" alt="Image ${idx + 1} thumbnail" onclick="window.open('${img.trim()}', '_blank')">
+                                        <span class="resource-url">🖼️ Image ${idx + 1}</span>
+                                        <button class="resource-btn" onclick="downloadResource('${img.trim()}', '${item.note_id}_image_${idx + 1}.jpg')">Download</button>
+                                    </div>
+                                `).join('') : ''}
+                                <div class="resource-item">
+                                    <img src="${item.avatar}" class="resource-preview" alt="Avatar" onclick="window.open('${item.avatar}', '_blank')">
+                                    <span class="resource-url">👤 Avatar</span>
+                                    <button class="resource-btn" onclick="downloadResource('${item.avatar}', '${item.note_id}_avatar.jpg')">Download</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <span class="type-badge ${item.type === 'video' ? 'type-video' : 'type-normal'}">${item.type}</span>
+                        <span style="color: #999; font-size: 0.85rem;">${formatDate(item.time)}</span>
+                        <a href="${item.note_url}" target="_blank" class="note-link">View Original →</a>
+                        <button class="btn-download-all" onclick="downloadAllResources('${item.note_id}', '${item.title.replace(/'/g, "\\'")}')">📦 Download All</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function downloadResource(url, filename) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const downloadUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Failed to download resource. Opening in new tab instead.');
+                window.open(url, '_blank');
+            }
+        }
+
+        async function downloadAllResources(noteId, title) {
+            const item = allData.find(i => i.note_id === noteId);
+            if (!item) return;
+
+            const btn = document.querySelector(`button[onclick="downloadAllResources('${noteId}', '${title.replace(/'/g, "\\'")}')"]`);
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Preparing...';
+
+            try {
+                const zip = new JSZip();
+                const resources = [];
+
+                // Collect all resource URLs
+                if (item.video_url) {
+                    resources.push({ url: item.video_url, filename: `video.mp4`, type: 'video' });
+                }
+                if (item.image_list) {
+                    item.image_list.split(',').forEach((img, idx) => {
+                        resources.push({ url: img.trim(), filename: `image_${idx + 1}.jpg`, type: 'image' });
+                    });
+                }
+
+                // Show progress
+                showProgress(0, resources.length);
+
+                // Download all resources
+                for (let i = 0; i < resources.length; i++) {
+                    const resource = resources[i];
+                    try {
+                        const response = await fetch(resource.url);
+                        const blob = await response.blob();
+                        zip.file(resource.filename, blob);
+                        
+                        updateProgress(i + 1, resources.length, `Downloading ${resource.filename}...`);
+                    } catch (error) {
+                        console.error(`Failed to download ${resource.filename}:`, error);
+                    }
+                }
+
+                // Generate ZIP
+                updateProgress(resources.length, resources.length, 'Creating ZIP file...');
+                const content = await zip.generateAsync({ type: 'blob' });
+                
+                // Download ZIP
+                const zipFilename = `${noteId}_${title.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_resources.zip`;
+                const downloadUrl = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = zipFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+
+                hideProgress();
+                btn.innerHTML = '✅ Downloaded!';
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }, 2000);
+
+            } catch (error) {
+                console.error('ZIP download failed:', error);
+                alert('Failed to create ZIP file. Please try downloading individual resources.');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                hideProgress();
+            }
+        }
+
+        function showProgress(current, total) {
+            const container = document.getElementById('progress-container');
+            const fill = document.getElementById('progress-fill');
+            const text = document.getElementById('progress-text');
+            
+            container.style.display = 'block';
+            fill.style.width = `${(current / total) * 100}%`;
+            text.textContent = `Downloading ${current}/${total}...`;
+        }
+
+        function updateProgress(current, total, message) {
+            const fill = document.getElementById('progress-fill');
+            const text = document.getElementById('progress-text');
+            
+            fill.style.width = `${(current / total) * 100}%`;
+            text.textContent = message;
+        }
+
+        function hideProgress() {
+            document.getElementById('progress-container').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
