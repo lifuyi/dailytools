@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小红书卡片渲染器 - Web版</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- 引入 Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <!-- 引入 marked.js 用于 Markdown 解析 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部工具栏 -->
+        <header class="toolbar">
+            <div class="toolbar-left">
+                <h1>📕 小红书卡片渲染器</h1>
+            </div>
+            <div class="toolbar-center">
+                <div class="toolbar-group">
+                    <label for="theme-select">主题：</label>
+                    <select id="theme-select">
+                        <option value="default">默认简约</option>
+                        <option value="playful-geometric">活泼几何</option>
+                        <option value="neo-brutalism">新粗野主义</option>
+                        <option value="botanical">植物园</option>
+                        <option value="professional">专业商务</option>
+                        <option value="retro">复古怀旧</option>
+                        <option value="terminal">终端风格</option>
+                        <option value="sketch">手绘素描</option>
+                    </select>
+                </div>
+                
+                <div class="toolbar-separator"></div>
+                
+                <div class="toolbar-group bg-controls">
+                    <span class="bg-label">背景渐变：</span>
+                    <input type="color" id="bg-color-1" value="#6366f1" title="起始颜色">
+                    <input type="color" id="bg-color-2" value="#8b5cf6" title="结束颜色">
+                    <select id="gradient-direction" title="渐变方向">
+                        <option value="135deg">↘ 对角线</option>
+                        <option value="180deg">↓ 从上到下</option>
+                        <option value="90deg">→ 从左到右</option>
+                        <option value="0deg">↑ 从下到上</option>
+                        <option value="45deg">↗ 对角线</option>
+                        <option value="225deg">↙ 对角线</option>
+                        <option value="270deg">← 从右到左</option>
+                    </select>
+                    <button id="apply-bg-btn" class="btn-small">应用</button>
+                    <button id="reset-bg-btn" class="btn-text btn-small">重置</button>
+                </div>
+                
+                <div class="toolbar-separator"></div>
+                
+                <div class="toolbar-group preset-gradients">
+                    <span class="bg-label">预设：</span>
+                    <div class="preset-colors">
+                        <button class="preset-btn" data-c1="#6366f1" data-c2="#8b5cf6" style="background: linear-gradient(135deg, #6366f1, #8b5cf6)" title="紫韵"></button>
+                        <button class="preset-btn" data-c1="#FF2442" data-c2="#FF6B81" style="background: linear-gradient(135deg, #FF2442, #FF6B81)" title="小红书红"></button>
+                        <button class="preset-btn" data-c1="#43e97b" data-c2="#38f9d7" style="background: linear-gradient(135deg, #43e97b, #38f9d7)" title="薄荷"></button>
+                        <button class="preset-btn" data-c1="#fa709a" data-c2="#fee140" style="background: linear-gradient(135deg, #fa709a, #fee140)" title="日落"></button>
+                        <button class="preset-btn" data-c1="#4facfe" data-c2="#00f2fe" style="background: linear-gradient(135deg, #4facfe, #00f2fe)" title="深海"></button>
+                        <button class="preset-btn" data-c1="#f093fb" data-c2="#f5576c" style="background: linear-gradient(135deg, #f093fb, #f5576c)" title="粉紫"></button>
+                        <button class="preset-btn" data-c1="#4facfe" data-c2="#00f2fe" style="background: linear-gradient(135deg, #4facfe, #00f2fe)" title="海洋"></button>
+                        <button class="preset-btn" data-c1="#fa709a" data-c2="#fee140" style="background: linear-gradient(135deg, #fa709a, #fee140)" title="暖阳"></button>
+                    </div>
+                </div>
+
+                <div class="toolbar-separator"></div>
+
+                <div class="toolbar-group size-controls">
+                    <span class="size-label">尺寸：</span>
+                    <div class="size-inputs">
+                        <div class="size-input-group">
+                            <label for="card-width">宽</label>
+                            <input type="number" id="card-width" value="360" min="200" max="600" step="10">
+                            <span>px</span>
+                        </div>
+                        <div class="size-input-group">
+                            <label for="card-height">高</label>
+                            <input type="number" id="card-height" value="480" min="200" max="800" step="10">
+                            <span>px</span>
+                        </div>
+                    </div>
+                    <button id="apply-size-btn" class="btn-small">应用</button>
+                    <button id="reset-size-btn" class="btn-text btn-small">重置</button>
+                    <div class="size-presets">
+                        <button class="size-preset-btn" data-w="360" data-h="480" title="小红书 3:4">3:4</button>
+                        <button class="size-preset-btn" data-w="360" data-h="360" title="正方形 1:1">1:1</button>
+                        <button class="size-preset-btn" data-w="360" data-h="640" title="抖音 9:16">9:16</button>
+                    </div>
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <button id="download-btn" class="btn-primary">📥 下载图片</button>
+            </div>
+        </header>
+
+        <!-- 主体内容区 -->
+        <main class="main-content">
+            <!-- 左侧编辑器 -->
+            <div class="editor-panel">
+                <div class="panel-header">
+                    <span class="panel-title">📝 Markdown 编辑器</span>
+                    <div class="panel-actions">
+                        <button id="clear-btn" class="btn-text">清空</button>
+                        <button id="sample-btn" class="btn-text">加载示例</button>
+                    </div>
+                </div>
+                <textarea id="markdown-input" placeholder="在此输入 Markdown 内容...
+
+支持 YAML 头部：
+---
+title: 标题
+subtitle: 副标题
+emoji: 📝
+---
+
+正文支持：
+# 一级标题
+## 二级标题
+**粗体**、*斜体*、`代码`
+
+- 列表项
+- 列表项
+
+> 引用块
+
+---
+
+用 --- 分隔多张卡片"></textarea>
+            </div>
+
+            <!-- 右侧预览区 -->
+            <div class="preview-panel">
+                <div class="panel-header">
+                    <span class="panel-title">👁️ 实时预览</span>
+                    <div class="panel-actions">
+                        <button id="refresh-btn" class="btn-text">刷新</button>
+                    </div>
+                </div>
+                <div class="preview-container">
+                    <!-- 卡片列表容器 -->
+                    <div id="cards-container" class="cards-list">
+                        <!-- 动态生成的卡片将插入这里 -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 动态加载主题 CSS -->
+    <link id="theme-css" rel="stylesheet" href="">
+    
+    <script src="app.js"></script>
+</body>
+</html>
