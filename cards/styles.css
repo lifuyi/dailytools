@@ -492,8 +492,30 @@ body {
 }
 
 .card-content img {
-    margin: 12px auto !important;
-    border-radius: 8px !important;
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin: 12px auto;
+    display: block;
+}
+
+/* 图片画廊 - 水平排列 */
+.image-gallery {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0;
+    flex-wrap: wrap;
+}
+
+.image-gallery img {
+    max-width: calc(50% - 6px);
+    height: auto;
+    border-radius: 8px;
+}
+
+.card-content {
+    position: relative;
+    min-height: 200px;
 }
 
 .card-content hr {

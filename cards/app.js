@@ -1,15 +1,75 @@
 /**
  * 小红书卡片渲染器 - Web版
- * 核心逻辑：Markdown 解析、主题切换、实时预览
  */
+
+// ============================================
+// IndexedDB 图片存储
+// ============================================
+const ImageStore = {
+    db: null,
+    dbName: 'CardImagesDB',
+    storeName: 'images',
+
+    async init() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve(this.db);
+            };
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName, { keyPath: 'id' });
+                }
+            };
+        });
+    },
+
+    async save(id, data) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.put({ id, data, timestamp: Date.now() });
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+        });
+    },
+
+    async get(id) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([this.storeName], 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(id);
+            request.onsuccess = () => resolve(request.result?.data);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    async getAll() {
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            store.getAll().onsuccess = (e) => resolve(e.target.result);
+        });
+    },
+
+    async delete(id) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            transaction.objectStore(this.storeName).delete(id);
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+        });
+    }
+};
 
 // ============================================
 // 配置与状态
 // ============================================
 const state = {
     currentTheme: 'default',
-    markdownContent: '',
-    parsedData: null,
     customBackground: {
         enabled: false,
         color1: '#6366f1',
@@ -22,7 +82,6 @@ const state = {
     }
 };
 
-// 主题标题渐变映射
 const themeTitleGradients = {
     'default': 'linear-gradient(180deg, #111827 0%, #4B5563 100%)',
     'playful-geometric': 'linear-gradient(180deg, #7C3AED 0%, #F472B6 100%)',
@@ -34,7 +93,6 @@ const themeTitleGradients = {
     'sketch': 'linear-gradient(180deg, #111827 0%, #6B7280 100%)'
 };
 
-// 示例内容
 const sampleMarkdown = `---
 title: 我的第一篇小红书
 subtitle: 分享生活点滴
@@ -47,36 +105,23 @@ emoji: 📝
 
 ## 列表示例
 
-- 第一项：这是一个列表项
-- 第二项：又一个列表项
-- 第三项：列表项内容
+- 第一项
+- 第二项
+- 第三项
 
 ## 引用块
 
-> 这是一个引用块，用来突出显示重要内容。
-
-## 代码示例
-
-\`\`\`javascript
-const greeting = "Hello, 小红书!";
-console.log(greeting);
-\`\`\`
+> 这是一个引用块
 
 ---
 
 # 第二张卡片
 
-你可以用 \`---\` 分隔符来创建多张卡片。
-
-## 链接示例
-
-[点击访问小红书](https://www.xiaohongshu.com)
-
-## 图片示例
+你可以用 \`---\` 分隔多张卡片。
 
 ![示例图片](https://via.placeholder.com/600x400/6366f1/ffffff?text=小红书)
 
-#标签1 #标签2 #小红书
+#标签1 #标签2
 `;
 
 // ============================================
@@ -108,11 +153,7 @@ const elements = {
 // Markdown 解析
 // ============================================
 
-/**
- * 解析 Markdown 文件，提取 YAML 头部和正文
- */
 function parseMarkdown(content) {
-    // 解析 YAML 头部
     const yamlPattern = /^---\s*\n([\s\S]*?)\n---\s*\n/;
     const yamlMatch = content.match(yamlPattern);
     
@@ -121,24 +162,16 @@ function parseMarkdown(content) {
     
     if (yamlMatch) {
         try {
-            // 简单解析 YAML
-            const yamlContent = yamlMatch[1];
-            metadata = parseYaml(yamlContent);
+            metadata = parseYaml(yamlMatch[1]);
         } catch (e) {
             console.error('YAML 解析失败:', e);
         }
         body = content.slice(yamlMatch[0].length);
     }
     
-    return {
-        metadata,
-        body: body.trim()
-    };
+    return { metadata, body: body.trim() };
 }
 
-/**
- * 简单 YAML 解析器
- */
 function parseYaml(content) {
     const result = {};
     const lines = content.split('\n');
@@ -146,50 +179,53 @@ function parseYaml(content) {
     for (const line of lines) {
         const match = line.match(/^([\w]+):\s*(.*)$/);
         if (match) {
-            const [, key, value] = match;
-            result[key] = value.trim().replace(/^["']|["']$/g, '');
+            result[match[1]] = match[2].trim().replace(/^["']|["']$/g, '');
         }
     }
-    
     return result;
 }
 
-/**
- * 按分隔符拆分内容为多张卡片
- */
 function splitContentBySeparator(body) {
-    const parts = body.split(/\n---+/);
-    return parts.map(p => p.trim()).filter(p => p);
+    return body.split(/\n---+/).map(p => p.trim()).filter(p => p);
 }
 
-/**
- * 转换 Markdown 为 HTML
- */
-function convertMarkdownToHtml(mdContent) {
-    // 处理 tags（以 # 开头的标签）
+async function convertMarkdownToHtml(mdContent) {
+    // 处理 IndexedDB 图片引用 ![img:id]
+    const imagePattern = /!\[img:([^\]]+)\]/g;
+    const imageMatches = [];
+    
+    let match;
+    while ((match = imagePattern.exec(mdContent)) !== null) {
+        imageMatches.push(match[1]);
+    }
+    
+    // 加载所有图片
+    for (const id of imageMatches) {
+        const src = await ImageStore.get(id);
+        if (src) {
+            mdContent = mdContent.replace(`![img:${id}]`, `![图片](${src})`);
+        } else {
+            mdContent = mdContent.replace(`![img:${id}]`, '');
+        }
+    }
+    
     const tagsPattern = /((?:#[\w\u4e00-\u9fa5]+\s*)+)$/m;
     const tagsMatch = mdContent.match(tagsPattern);
     let tagsHtml = '';
     
     if (tagsMatch) {
-        const tagsStr = tagsMatch[1];
-        mdContent = mdContent.slice(0, tagsMatch.index).trim();
-        const tags = tagsStr.match(/#([\w\u4e00-\u9fa5]+)/g);
+        const tags = tagsMatch[1].match(/#([\w\u4e00-\u9fa5]+)/g);
         if (tags) {
             tagsHtml = '<div class="tags-container">';
-            for (const tag of tags) {
+            tags.forEach(tag => {
                 tagsHtml += `<span class="tag">${tag}</span>`;
-            }
+            });
             tagsHtml += '</div>';
         }
+        mdContent = mdContent.slice(0, tagsMatch.index).trim();
     }
     
-    // 使用 marked.js 转换 Markdown
-    const html = marked.parse(mdContent, {
-        breaks: true,
-        gfm: true
-    });
-    
+    const html = marked.parse(mdContent, { breaks: true, gfm: true });
     return html + tagsHtml;
 }
 
@@ -197,25 +233,13 @@ function convertMarkdownToHtml(mdContent) {
 // HTML 生成
 // ============================================
 
-/**
- * 生成封面 HTML
- */
 function generateCoverHtml(metadata, theme) {
     const emoji = metadata.emoji || '📝';
-    let title = metadata.title || '标题';
-    let subtitle = metadata.subtitle || '';
+    let title = (metadata.title || '标题').slice(0, 20);
+    let subtitle = (metadata.subtitle || '').slice(0, 20);
     
-    // 限制长度
-    if (title.length > 20) title = title.slice(0, 20);
-    if (subtitle.length > 20) subtitle = subtitle.slice(0, 20);
-    
-    // 动态调整标题大小
     const titleLen = title.length;
-    let titleSize;
-    if (titleLen <= 6) titleSize = 52;
-    else if (titleLen <= 10) titleSize = 46;
-    else if (titleLen <= 18) titleSize = 36;
-    else titleSize = 28;
+    let titleSize = titleLen <= 6 ? 52 : titleLen <= 10 ? 46 : titleLen <= 18 ? 36 : 28;
     
     const titleGradient = themeTitleGradients[theme] || themeTitleGradients['default'];
     
@@ -228,52 +252,39 @@ function generateCoverHtml(metadata, theme) {
     `;
 }
 
-/**
- * 生成正文卡片 HTML
- */
 function generateCardHtml(content, pageNumber, totalPages) {
-    const htmlContent = convertMarkdownToHtml(content);
-    const pageText = totalPages > 1 ? `${pageNumber}/${totalPages}` : '';
-    
-    return `
-        <div class="card-container">
-            <div class="card-inner">
-                <div class="card-content">
-                    ${htmlContent}
+    return convertMarkdownToHtml(content).then(htmlContent => {
+        const pageText = totalPages > 1 ? `${pageNumber}/${totalPages}` : '';
+        return `
+            <div class="card-container">
+                <div class="card-inner">
+                    <div class="card-content">
+                        ${htmlContent}
+                    </div>
                 </div>
+                ${pageText ? `<div class="page-number">${pageText}</div>` : ''}
             </div>
-            ${pageText ? `<div class="page-number">${pageText}</div>` : ''}
-        </div>
-    `;
+        `;
+    });
 }
 
 // ============================================
 // 渲染逻辑
 // ============================================
 
-/**
- * 渲染所有卡片
- */
-function renderCards() {
+async function renderCards() {
     const content = elements.markdownInput.value;
     if (!content.trim()) {
         elements.cardsContainer.innerHTML = '';
         return;
     }
     
-    // 解析 Markdown
     const { metadata, body } = parseMarkdown(content);
-    
-    // 分割内容
     const cardContents = splitContentBySeparator(body);
     
-    // 清空容器
     elements.cardsContainer.innerHTML = '';
-    
-    // 添加主题类
     elements.cardsContainer.className = `cards-list theme-${state.currentTheme}`;
     
-    // 生成封面（如果有标题或 emoji）
     if (metadata.title || metadata.emoji) {
         const coverWrapper = document.createElement('div');
         coverWrapper.className = 'card-wrapper';
@@ -286,42 +297,33 @@ function renderCards() {
         elements.cardsContainer.appendChild(coverWrapper);
     }
     
-    // 生成正文卡片
-    cardContents.forEach((cardContent, index) => {
+    for (let index = 0; index < cardContents.length; index++) {
         const cardWrapper = document.createElement('div');
         cardWrapper.className = 'card-wrapper';
-        const pageNum = index + 1;
+        const htmlContent = await generateCardHtml(cardContents[index], index + 1, cardContents.length);
         cardWrapper.innerHTML = `
-            <div class="card-label">卡片 ${pageNum}</div>
+            <div class="card-label">卡片 ${index + 1}</div>
             <div class="content-card">
-                ${generateCardHtml(cardContent, pageNum, cardContents.length)}
+                ${htmlContent}
             </div>
         `;
         elements.cardsContainer.appendChild(cardWrapper);
-    });
+    }
 }
 
-/**
- * 切换主题
- */
-function switchTheme(theme) {
+async function switchTheme(theme) {
     state.currentTheme = theme;
     elements.themeCss.href = `themes/${theme}.css`;
-    renderCards();
+    await renderCards();
 }
 
 function applyCustomBackground() {
-    const color1 = elements.bgColor1.value;
-    const color2 = elements.bgColor2.value;
-    const direction = elements.gradientDirection.value;
-
-    state.customBackground = {
-        enabled: true,
-        color1,
-        color2,
-        direction
-    };
-
+    const { value: color1 } = elements.bgColor1;
+    const { value: color2 } = elements.bgColor2;
+    const { value: direction } = elements.gradientDirection;
+    
+    state.customBackground = { enabled: true, color1, color2, direction };
+    
     elements.cardsContainer.classList.add('custom-bg');
     elements.cardsContainer.style.setProperty('--bg-color-1', color1);
     elements.cardsContainer.style.setProperty('--bg-color-2', color2);
@@ -334,11 +336,10 @@ function resetBackground() {
     elements.cardsContainer.style.removeProperty('--bg-color-1');
     elements.cardsContainer.style.removeProperty('--bg-color-2');
     elements.cardsContainer.style.removeProperty('--gradient-direction');
-
+    
     elements.bgColor1.value = '#6366f1';
     elements.bgColor2.value = '#8b5cf6';
     elements.gradientDirection.value = '135deg';
-
     elements.presetBtns.forEach(btn => btn.classList.remove('active'));
 }
 
@@ -351,9 +352,9 @@ function applyPreset(color1, color2) {
 function applyCardSize() {
     const width = parseInt(elements.cardWidth.value) || 360;
     const height = parseInt(elements.cardHeight.value) || 480;
-
+    
     state.cardSize = { width, height };
-
+    
     elements.cardsContainer.style.setProperty('--card-width', width + 'px');
     elements.cardsContainer.style.setProperty('--card-height', height + 'px');
     elements.cardsContainer.style.setProperty('--cover-inner-width', Math.floor(width * 0.88) + 'px');
@@ -362,15 +363,12 @@ function applyCardSize() {
 
 function resetCardSize() {
     state.cardSize = { width: 360, height: 480 };
-
     elements.cardWidth.value = 360;
     elements.cardHeight.value = 480;
-
     elements.cardsContainer.style.removeProperty('--card-width');
     elements.cardsContainer.style.removeProperty('--card-height');
     elements.cardsContainer.style.removeProperty('--cover-inner-width');
     elements.cardsContainer.style.removeProperty('--cover-inner-height');
-
     elements.sizePresetBtns.forEach(btn => btn.classList.remove('active'));
 }
 
@@ -384,99 +382,211 @@ function applySizePreset(width, height) {
 // 事件处理
 // ============================================
 
-/**
- * 防抖函数
- */
 function debounce(func, wait) {
     let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
+    return function(...args) {
         clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        timeout = setTimeout(() => func.apply(this, args), wait);
     };
 }
 
 function initEventListeners() {
-    const debouncedRender = debounce(renderCards, 300);
-    elements.markdownInput.addEventListener('input', debouncedRender);
-
-    elements.themeSelect.addEventListener('change', (e) => {
-        switchTheme(e.target.value);
-    });
-
-    elements.clearBtn.addEventListener('click', () => {
+    elements.markdownInput.addEventListener('input', debounce(() => {
+        renderCards();
+    }, 300));
+    elements.markdownInput.addEventListener('paste', handlePaste);
+    
+    elements.themeSelect.addEventListener('change', (e) => switchTheme(e.target.value));
+    
+    elements.clearBtn.addEventListener('click', async () => {
         if (confirm('确定要清空所有内容吗？')) {
             elements.markdownInput.value = '';
-            renderCards();
+            await renderCards();
         }
     });
-
-    elements.sampleBtn.addEventListener('click', () => {
+    
+    elements.sampleBtn.addEventListener('click', async () => {
         elements.markdownInput.value = sampleMarkdown;
-        renderCards();
+        await renderCards();
     });
-
-    elements.refreshBtn.addEventListener('click', () => {
-        renderCards();
+    
+    elements.refreshBtn.addEventListener('click', async () => {
+        await renderCards();
     });
-
+    
     elements.downloadBtn.addEventListener('click', () => {
-        alert('请使用浏览器截图功能（Cmd+Shift+4 或 Win+Shift+S）截取右侧预览区域。\n\n提示：可以将浏览器窗口调整为只显示右侧预览，获得最佳效果。');
+        alert('请使用浏览器截图功能（Cmd+Shift+4 或 Win+Shift+S）截取右侧预览区域。');
     });
-
+    
     elements.applyBgBtn.addEventListener('click', applyCustomBackground);
-
     elements.resetBgBtn.addEventListener('click', resetBackground);
-
+    
     elements.bgColor1.addEventListener('change', applyCustomBackground);
     elements.bgColor2.addEventListener('change', applyCustomBackground);
     elements.gradientDirection.addEventListener('change', applyCustomBackground);
-
+    
     elements.presetBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             elements.presetBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            const c1 = btn.dataset.c1;
-            const c2 = btn.dataset.c2;
-            applyPreset(c1, c2);
+            applyPreset(btn.dataset.c1, btn.dataset.c2);
         });
     });
-
+    
     elements.applySizeBtn.addEventListener('click', applyCardSize);
-
     elements.resetSizeBtn.addEventListener('click', resetCardSize);
-
+    
     elements.sizePresetBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             elements.sizePresetBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            const w = btn.dataset.w;
-            const h = btn.dataset.h;
-            applySizePreset(w, h);
+            applySizePreset(btn.dataset.w, btn.dataset.h);
         });
     });
+}
+
+// ============================================
+// 图片粘贴功能
+// ============================================
+
+async function handlePaste(e) {
+    const items = e.clipboardData.items;
+    
+    // First try to find direct image data
+    for (const item of items) {
+        const type = item.type || '';
+        
+        if (type.startsWith('image/') || type === 'image') {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            let blob = item.getAsFile();
+            
+            if (!blob && item.getAs) {
+                try {
+                    blob = await item.getAs(window.Blob);
+                } catch (err) {
+                    console.warn('Failed to get blob:', err);
+                }
+            }
+            
+            if (!blob) {
+                console.warn('No image data found');
+                alert('无法读取图片数据，请尝试复制图片后直接粘贴');
+                return;
+            }
+            
+            console.log('Image blob type:', blob.type, 'size:', blob.size);
+            
+            const base64 = await fileToBase64(blob);
+            console.log('Base64 length:', base64.length);
+            
+            const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            console.log('Saving image with ID:', imageId);
+            
+            await ImageStore.save(imageId, base64);
+            console.log('Image saved to IndexedDB');
+            
+            const imageMarkdown = `\n![img:${imageId}]\n`;
+            insertTextAtCursor(imageMarkdown);
+            await renderCards();
+            console.log('Render complete');
+            return;
+        }
+    }
+    
+    // Fallback: check if HTML clipboard contains image
+    const html = e.clipboardData.getData('text/html');
+    const imgMatch = html && html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    
+    if (imgMatch) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const src = imgMatch[1];
+        console.log('Found image in HTML:', src.substring(0, 50) + '...');
+        
+        if (src.startsWith('data:image/')) {
+            const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            await ImageStore.save(imageId, src);
+            const imageMarkdown = `\n![img:${imageId}]\n`;
+            insertTextAtCursor(imageMarkdown);
+            await renderCards();
+        } else if (src.startsWith('http')) {
+            try {
+                const response = await fetch(src);
+                const blob = await response.blob();
+                const base64 = await fileToBase64(blob);
+                const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                await ImageStore.save(imageId, base64);
+                const imageMarkdown = `\n![img:${imageId}]\n`;
+                insertTextAtCursor(imageMarkdown);
+                await renderCards();
+            } catch (err) {
+                console.warn('Failed to fetch image:', err);
+                alert('无法加载图片，请尝试直接复制图片文件');
+            }
+        }
+    } else {
+        console.log('No image found in clipboard. Items:', Array.from(items).map(i => i.type));
+    }
+}
+
+function fileToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function insertImages(images) {
+    const imageIds = [];
+    
+    for (const data of images) {
+        const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        await ImageStore.save(imageId, data);
+        imageIds.push(imageId);
+    }
+    
+    let imageMarkdown = '';
+    
+    if (imageIds.length === 1) {
+        imageMarkdown = `\n![img:${imageIds[0]}]\n`;
+    } else {
+        imageMarkdown = `\n<div class="image-gallery gallery-horizontal">\n`;
+        imageIds.forEach((id, i) => {
+            imageMarkdown += `  ![img:${id}]\n`;
+        });
+        imageMarkdown += `</div>\n`;
+    }
+    
+    insertTextAtCursor(imageMarkdown);
+    renderCards();
+}
+
+function insertTextAtCursor(text) {
+    const input = elements.markdownInput;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const value = input.value;
+    input.value = value.substring(0, start) + text + value.substring(end);
+    input.selectionStart = input.selectionEnd = start + text.length;
+    input.focus();
 }
 
 // ============================================
 // 初始化
 // ============================================
 
-function init() {
-    // 加载默认主题
+async function init() {
+    await ImageStore.init();
     switchTheme('default');
-    
-    // 绑定事件
     initEventListeners();
-    
-    // 加载示例内容
     elements.markdownInput.value = sampleMarkdown;
     renderCards();
-    
     console.log('📝 小红书卡片渲染器已初始化');
 }
 
-// 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', init);
