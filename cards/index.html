@@ -9,6 +9,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
     <!-- 引入 marked.js 用于 Markdown 解析 -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 引入 html2canvas 用于导出图片 -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <!-- 引入 dom-to-image 用于更好的导出 -->
+    <script src="https://cdn.jsdelivr.net/npm/dom-to-image@2.6.0/dist/dom-to-image.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -86,9 +90,10 @@
                     <button id="apply-size-btn" class="btn-small">应用</button>
                     <button id="reset-size-btn" class="btn-text btn-small">重置</button>
                     <div class="size-presets">
-                        <button class="size-preset-btn" data-w="360" data-h="480" title="小红书 3:4">3:4</button>
-                        <button class="size-preset-btn" data-w="360" data-h="360" title="正方形 1:1">1:1</button>
-                        <button class="size-preset-btn" data-w="360" data-h="640" title="抖音 9:16">9:16</button>
+<button class="size-preset-btn" data-w="360" data-h="480" title="小红书 3:4">3:4</button>
+                    <button class="size-preset-btn" data-w="360" data-h="360" title="正方形 1:1">1:1</button>
+                    <button class="size-preset-btn" data-w="360" data-h="640" title="抖音 9:16">9:16</button>
+                    <button class="size-preset-btn" data-w="360" data-h="203" title="横屏 16:9">16:9</button>
                     </div>
                 </div>
             </div>
