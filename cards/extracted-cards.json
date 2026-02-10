@@ -1,0 +1,23 @@
+[
+  {
+    "label": "封面",
+    "type": "cover",
+    "emoji": "📝",
+    "title": "我的第一篇小红书",
+    "subtitle": "分享生活点滴",
+    "background": "background: linear-gradient(135deg, rgb(255, 36, 66)",
+    "titleGradient": "linear-gradient(rgb(30, 58, 138)"
+  },
+  {
+    "label": "卡片 1",
+    "type": "content",
+    "content": "<h1>欢迎来到小红书</h1> <p>这是一段<strong>加粗</strong>的文字，还有<em>斜体</em>和<code>代码</code>。</p> <h2>列表示例</h2> <ul> <li>第一项</li> <li>第二项</li> <li>第三项</li> </ul> <h2>引用块</h2> <blockquote> <p>这是一个引用块</p> </blockquote>",
+    "pageNumber": "1/2"
+  },
+  {
+    "label": "卡片 2",
+    "type": "content",
+    "content": "<h1>第二张卡片</h1> <p>你可以用 <code>---</code> 分隔多张卡片。</p> <p>多张图片连续粘贴时会自动并排显示。</p> <div class=\"tags-container\"><span class=\"tag\">#标签1</span><span class=\"tag\">#标签2</span>",
+    "pageNumber": "2/2"
+  }
+]
