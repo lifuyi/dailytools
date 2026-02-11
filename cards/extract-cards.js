@@ -1,13 +1,27 @@
+// Built-in modules
 const fs = require('fs');
 const path = require('path');
+
+// Third-party modules
 const puppeteer = require('puppeteer');
 
 /**
  * Extract card data from xiaohongshu-cards HTML file
+ * @param {string} htmlPath - Path to the HTML file
+ * @returns {Array} Array of card objects
+ * @throws {Error} If file cannot be read or parsed
  */
 function extractCardsFromHTML(htmlPath) {
-    // Read HTML file
-    const html = fs.readFileSync(htmlPath, 'utf-8');
+    if (!fs.existsSync(htmlPath)) {
+        throw new Error(`File not found: ${htmlPath}`);
+    }
+
+    let html;
+    try {
+        html = fs.readFileSync(htmlPath, 'utf-8');
+    } catch (error) {
+        throw new Error(`Failed to read file ${htmlPath}: ${error.message}`);
+    }
 
     const cards = [];
 
@@ -31,32 +45,9 @@ function extractCardsFromHTML(htmlPath) {
         };
 
         if (isCoverCard) {
-            // Extract cover card data
-            cardData.emoji = extractText(cardWrapperHTML, 'cover-emoji');
-            cardData.title = extractText(cardWrapperHTML, 'cover-title');
-            cardData.subtitle = extractText(cardWrapperHTML, 'cover-subtitle');
-            
-            // Extract background gradient
-            const bgMatch = cardWrapperHTML.match(/background:\s*linear-gradient\([^)]+\)/);
-            cardData.background = bgMatch ? bgMatch[0] : null;
-            
-            // Extract title gradient
-            const titleGradientMatch = cardWrapperHTML.match(/class="cover-title"[^>]*background:\s*linear-gradient\([^)]+\)/);
-            if (titleGradientMatch) {
-                const gradientMatch = titleGradientMatch[0].match(/linear-gradient\([^)]+\)/);
-                cardData.titleGradient = gradientMatch ? gradientMatch[0] : null;
-            }
+            Object.assign(cardData, extractCoverCardData(cardWrapperHTML));
         } else {
-            // Extract content card data
-            const cardContentMatch = cardWrapperHTML.match(/<div class="card-content"[^>]*>(.*?)<\/div>/s);
-            if (cardContentMatch) {
-                const contentHTML = cardContentMatch[1];
-                cardData.content = cleanContent(contentHTML);
-                
-                // Extract page number
-                const pageMatch = cardWrapperHTML.match(/<div class="page-number"[^>]*>(.*?)<\/div>/s);
-                cardData.pageNumber = pageMatch ? pageMatch[1].trim() : null;
-            }
+            Object.assign(cardData, extractContentCardData(cardWrapperHTML));
         }
 
         cards.push(cardData);
@@ -78,15 +69,51 @@ function extractText(html, className) {
 }
 
 /**
- * Clean content by removing excessive style attributes
+ * Extract data from a cover card HTML
+ * @param {string} cardWrapperHTML - HTML content of card wrapper
+ * @returns {Object} Cover card data
  */
+function extractCoverCardData(cardWrapperHTML) {
+    const cardData = {};
+    cardData.emoji = extractText(cardWrapperHTML, 'cover-emoji');
+    cardData.title = extractText(cardWrapperHTML, 'cover-title');
+    cardData.subtitle = extractText(cardWrapperHTML, 'cover-subtitle');
+
+    const bgMatch = cardWrapperHTML.match(/background:\s*linear-gradient\([^)]+\)/);
+    cardData.background = bgMatch ? bgMatch[0] : null;
+
+    const titleGradientMatch = cardWrapperHTML.match(/class="cover-title"[^>]*background:\s*linear-gradient\([^)]+\)/);
+    if (titleGradientMatch) {
+        const gradientMatch = titleGradientMatch[0].match(/linear-gradient\([^)]+\)/);
+        cardData.titleGradient = gradientMatch ? gradientMatch[0] : null;
+    }
+
+    return cardData;
+}
+
+/**
+ * Extract data from a content card HTML
+ * @param {string} cardWrapperHTML - HTML content of card wrapper
+ * @returns {Object} Content card data
+ */
+function extractContentCardData(cardWrapperHTML) {
+    const cardData = {};
+    const cardContentMatch = cardWrapperHTML.match(/<div class="card-content"[^>]*>(.*?)<\/div>/s);
+
+    if (cardContentMatch) {
+        const contentHTML = cardContentMatch[1];
+        cardData.content = cleanContent(contentHTML);
+
+        const pageMatch = cardWrapperHTML.match(/<div class="page-number"[^>]*>(.*?)<\/div>/s);
+        cardData.pageNumber = pageMatch ? pageMatch[1].trim() : null;
+    }
+
+    return cardData;
+}
+
 function cleanContent(contentHTML) {
-    // Remove inline style attributes (they contain computed styles)
     let cleaned = contentHTML.replace(/\s*style="[^"]*"/g, '');
-    
-    // Clean up extra whitespace
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    
     return cleaned;
 }
 
@@ -379,93 +406,179 @@ function printCardSummary(cards) {
 }
 
 /**
- * Export individual cards as PNG files
+ * Export individual cards as PNG files using Puppeteer
+ * @param {string} htmlPath - Path to the HTML file containing cards
+ * @param {string} outputDir - Directory to save PNG files
+ * @throws {Error} If export fails
  */
 async function exportCardsToPNG(htmlPath, outputDir) {
     console.log('\n🖼️  Exporting cards to PNG...');
     
-    // Create output directory if it doesn't exist
+    if (!fs.existsSync(htmlPath)) {
+        throw new Error(`HTML file not found: ${htmlPath}`);
+    }
+    
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const browser = await puppeteer.launch({ headless: 'new' });
-    const page = await browser.newPage();
-    
-    // Set device scale factor for higher quality
-    await page.setViewport({ 
-        width: 360, 
-        height: 480,
-        deviceScaleFactor: 2
-    });
-    
-    // Load HTML file
-    const fileUrl = `file://${htmlPath}`;
-    await page.goto(fileUrl, { waitUntil: 'networkidle0' });
-
-    // Get all card wrappers
-    const cards = await page.$$('.card-wrapper');
-    
-    console.log(`Found ${cards.length} cards to export...`);
-    
-    for (let i = 0; i < cards.length; i++) {
-        const card = cards[i];
+    let browser;
+    try {
+        browser = await puppeteer.launch({ headless: 'new' });
+        const page = await browser.newPage();
         
-        // Get card label for filename
-        const labelElement = await card.$('.card-label');
-        const label = labelElement ? await page.evaluate(el => el.textContent.trim(), labelElement) : `card_${i + 1}`;
-        
-        // Sanitize label for filename (allow Chinese characters)
-        const sanitizedLabel = label.replace(/[^\w\u4e00-\u9fa5\s-]/g, '').replace(/\s+/g, '_');
-        const filename = `${sanitizedLabel}.png`;
-        const outputPath = path.join(outputDir, filename);
-        
-        // Get bounding box with padding for shadow
-        const boundingBox = await card.boundingBox();
-        
-        // Screenshot the card with padding for shadow
-        await page.screenshot({
-            path: outputPath,
-            clip: {
-                x: boundingBox.x - 10,
-                y: boundingBox.y - 10,
-                width: boundingBox.width + 20,
-                height: boundingBox.height + 20
-            }
+        await page.setViewport({ 
+            width: 360, 
+            height: 480,
+            deviceScaleFactor: 2
         });
         
-        console.log(`✓ Exported: ${filename}`);
+        const fileUrl = `file://${htmlPath}`;
+        await page.goto(fileUrl, { waitUntil: 'networkidle0' });
+
+        const cards = await page.$$('.card-wrapper');
+        
+        if (cards.length === 0) {
+            console.warn('No cards found in HTML file');
+            return;
+        }
+        
+        console.log(`Found ${cards.length} cards to export...`);
+        
+        for (let i = 0; i < cards.length; i++) {
+            const card = cards[i];
+            
+            const labelElement = await card.$('.card-label');
+            const label = labelElement ? await page.evaluate(el => el.textContent.trim(), labelElement) : `card_${i + 1}`;
+            
+            const sanitizedLabel = label.replace(/[^\w\u4e00-\u9fa5\s-]/g, '').replace(/\s+/g, '_');
+            const filename = `${sanitizedLabel}.png`;
+            const outputPath = path.join(outputDir, filename);
+            
+            const boundingBox = await card.boundingBox();
+            
+            if (!boundingBox) {
+                console.warn(`Could not get bounding box for card ${i + 1}, skipping...`);
+                continue;
+            }
+            
+            await page.screenshot({
+                path: outputPath,
+                clip: {
+                    x: Math.max(0, boundingBox.x - 10),
+                    y: Math.max(0, boundingBox.y - 10),
+                    width: boundingBox.width + 20,
+                    height: boundingBox.height + 20
+                }
+            });
+            
+            console.log(`✓ Exported: ${filename}`);
+        }
+        
+        console.log(`\n✓ All cards exported to ${outputDir}/`);
+    } catch (error) {
+        console.error('Export failed:', error.message);
+        throw error;
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
     }
-    
-    await browser.close();
-    console.log(`\n✓ All cards exported to ${outputDir}/`);
 }
 
-// Main execution
-const htmlPath = path.join(__dirname, 'xiaohongshu-cards (8).html');
-const jsonOutputPath = path.join(__dirname, 'extracted-cards.json');
-const reconstructedHtmlPath = path.join(__dirname, 'reconstructed-cards.html');
-const pngOutputDir = path.join(__dirname, 'cards-png');
+/**
+ * Parse command line arguments
+ * @returns {Object} Parsed arguments
+ */
+function parseArgs() {
+    const args = process.argv.slice(2);
+    const options = {
+        input: null,
+        outputJson: null,
+        outputHtml: null,
+        outputPngDir: null
+    };
+    
+    for (let i = 0; i < args.length; i++) {
+        switch (args[i]) {
+            case '-i':
+            case '--input':
+                options.input = args[++i];
+                break;
+            case '-j':
+            case '--json':
+                options.outputJson = args[++i];
+                break;
+            case '-h':
+            case '--html':
+                options.outputHtml = args[++i];
+                break;
+            case '-p':
+            case '--png':
+                options.outputPngDir = args[++i];
+                break;
+            case '--help':
+                showHelp();
+                process.exit(0);
+                break;
+        }
+    }
+    
+    return options;
+}
 
+function showHelp() {
+    console.log(`
+Usage: node extract-cards.js [options]
+
+Options:
+  -i, --input <path>     Input HTML file path (required)
+  -j, --json <path>      Output JSON file path
+  -h, --html <path>      Output HTML file path
+  -p, --png <dir>        Output PNG directory
+  --help                 Show this help message
+
+Examples:
+  node extract-cards.js -i input.html
+  node extract-cards.js -i input.html -j cards.json -h output.html -p png-output/
+`);
+}
+
+/**
+ * Main execution function
+ */
 async function main() {
+    const args = parseArgs();
+    
+    if (!args.input) {
+        console.error('Error: Input file is required. Use -i or --input option.');
+        showHelp();
+        process.exit(1);
+    }
+    
+    const htmlPath = path.resolve(args.input);
+    const baseName = path.basename(htmlPath, path.extname(htmlPath));
+    const baseDir = path.dirname(htmlPath);
+    
+    const jsonOutputPath = args.outputJson || path.join(baseDir, `${baseName}.json`);
+    const reconstructedHtmlPath = args.outputHtml || path.join(baseDir, `${baseName}-reconstructed.html`);
+    const pngOutputDir = args.outputPngDir || path.join(baseDir, `${baseName}-png`);
+    
     try {
         console.log('Extracting cards from HTML file...');
         const cards = extractCardsFromHTML(htmlPath);
         printCardSummary(cards);
         saveCardsToJson(cards, jsonOutputPath);
         
-        // Convert back to HTML
         console.log('\nConverting cards back to HTML...');
         const reconstructedHtml = convertCardsToHTML(cards);
         saveHtmlToFile(reconstructedHtml, reconstructedHtmlPath);
         
-        // Export to PNG
         await exportCardsToPNG(reconstructedHtmlPath, pngOutputDir);
         
         console.log('\n✓ All operations complete!');
     } catch (error) {
         console.error('✗ Error:', error.message);
-        console.error(error.stack);
         process.exit(1);
     }
 }

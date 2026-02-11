@@ -48,10 +48,12 @@ const ImageStore = {
     },
 
     async getAll() {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([this.storeName], 'readonly');
             const store = transaction.objectStore(this.storeName);
-            store.getAll().onsuccess = (e) => resolve(e.target.result);
+            const request = store.getAll();
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = () => reject(request.error);
         });
     },
 
@@ -310,10 +312,11 @@ async function renderCards() {
         elements.cardsContainer.appendChild(cardWrapper);
     }
     
-    // Add error handling for images
     elements.cardsContainer.querySelectorAll('img').forEach(img => {
         img.onerror = function() {
+            console.warn(`Failed to load image: ${this.src?.substring(0, 100)}...`);
             this.style.display = 'none';
+            this.classList.add('image-error');
         };
     });
 }
@@ -402,110 +405,72 @@ function debounce(func, wait) {
     };
 }
 
-function initEventListeners() {
-    elements.markdownInput.addEventListener('input', debounce(() => {
-        renderCards();
-    }, 300));
-    elements.markdownInput.addEventListener('paste', handlePaste);
+// ============================================
+// Export Functions
+// ============================================
+
+/**
+ * Collect card data from the DOM for export
+ * @returns {Object} Object containing card HTML array and dimensions
+ */
+function collectCardsData() {
+    const cardWrappers = elements.cardsContainer.querySelectorAll('.card-wrapper');
+    const cardsHtml = [];
     
-    elements.themeSelect.addEventListener('change', (e) => switchTheme(e.target.value));
-    
-    elements.clearBtn.addEventListener('click', async () => {
-        if (confirm('确定要清空所有内容吗？')) {
-            elements.markdownInput.value = '';
-            await renderCards();
+    for (let i = 0; i < cardWrappers.length; i++) {
+        const wrapper = cardWrappers[i];
+        const card = wrapper.querySelector('.cover-card, .content-card');
+        if (card) {
+            const cardClone = card.cloneNode(true);
+            applyInlineStyles(card, cardClone);
+            cardsHtml.push(cardClone.outerHTML);
         }
-    });
+    }
     
-    elements.sampleBtn.addEventListener('click', async () => {
-        elements.markdownInput.value = sampleMarkdown;
-        await renderCards();
-    });
+    const containerStyle = window.getComputedStyle(elements.cardsContainer);
+    const width = parseFloat(containerStyle.getPropertyValue('--card-width')) || 360;
+    const height = parseFloat(containerStyle.getPropertyValue('--card-height')) || 480;
     
-    elements.refreshBtn.addEventListener('click', async () => {
-        await renderCards();
-    });
+    return { cardsHtml, width, height };
+}
+
+/**
+ * Apply computed styles to a cloned element recursively
+ * @param {Element} original - Original element
+ * @param {Element} clone - Cloned element to apply styles to
+ */
+function applyInlineStyles(original, clone) {
+    const originalStyle = window.getComputedStyle(original);
+    const properties = Array.from(originalStyle);
     
-    elements.downloadBtn.addEventListener('click', async () => {
-        const cardWrappers = elements.cardsContainer.querySelectorAll('.card-wrapper');
+    for (const prop of properties) {
+        clone.style[prop] = originalStyle.getPropertyValue(prop);
+    }
+    
+    const originalChildren = original.children;
+    const cloneChildren = clone.children;
+    
+    for (let i = 0; i < originalChildren.length && i < cloneChildren.length; i++) {
+        applyInlineStyles(originalChildren[i], cloneChildren[i]);
+    }
+}
 
-        if (cardWrappers.length === 0) {
-            alert('没有可导出的卡片');
-            return;
-        }
-
-        const btn = elements.downloadBtn;
-        const originalText = btn.textContent;
-        btn.textContent = '导出中...';
-        btn.disabled = true;
-
-        try {
-            // Get dimensions from CSS variables
-            const containerStyle = window.getComputedStyle(elements.cardsContainer);
-            const width = parseFloat(containerStyle.getPropertyValue('--card-width')) || 360;
-            const height = parseFloat(containerStyle.getPropertyValue('--card-height')) || 480;
-
-            // Get current theme CSS
-            const themeLink = document.getElementById('theme-css');
-            let themeCssContent = '';
-            
-            if (themeLink && themeLink.href) {
-                try {
-                    const response = await fetch(themeLink.href);
-                    themeCssContent = await response.text();
-                } catch (e) {
-                    console.warn('Failed to load theme CSS:', e);
-                }
-            }
-
-            // Collect all cards and apply inline styles
-            const cardsHtml = [];
-            for (let i = 0; i < cardWrappers.length; i++) {
-                const wrapper = cardWrappers[i];
-                const card = wrapper.querySelector('.cover-card, .content-card');
-                if (card) {
-                    // Clone the card to apply inline styles
-                    const cardClone = card.cloneNode(true);
-                    
-                    // Apply computed styles to the cloned card
-                    applyInlineStyles(card, cardClone);
-                    
-                    cardsHtml.push(cardClone.outerHTML);
-                }
-            }
-
-            // Helper function to apply inline styles recursively
-            function applyInlineStyles(original, clone) {
-                const originalStyle = window.getComputedStyle(original);
-                
-                // Copy all computed styles
-                const properties = Array.from(originalStyle);
-                for (const prop of properties) {
-                    clone.style[prop] = originalStyle.getPropertyValue(prop);
-                }
-                
-                // Apply to children recursively
-                const originalChildren = original.children;
-                const cloneChildren = clone.children;
-                
-                for (let i = 0; i < originalChildren.length && i < cloneChildren.length; i++) {
-                    applyInlineStyles(originalChildren[i], cloneChildren[i]);
-                }
-            }
-
-            // Generate complete HTML document
-            const fullHtml = `<!DOCTYPE html>
+/**
+ * Generate complete HTML document for export
+ * @param {Array} cardsHtml - Array of card HTML strings
+ * @param {number} width - Card width in pixels
+ * @param {number} height - Card height in pixels
+ * @returns {string} Complete HTML document
+ */
+function generateExportHTML(cardsHtml, width, height) {
+    return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>小红书卡片</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f5f5;
@@ -528,10 +493,7 @@ function initEventListeners() {
             --cover-inner-width: calc(var(--card-width) * 0.88);
             --cover-inner-height: calc(var(--card-height) * 0.91);
         }
-        /* Base card styles */
-        .card-wrapper {
-            position: relative;
-        }
+        .card-wrapper { position: relative; }
         .card-label {
             position: absolute;
             top: -25px;
@@ -565,11 +527,7 @@ function initEventListeners() {
             flex-direction: column;
             padding: calc(var(--card-width) * 0.074) calc(var(--card-width) * 0.079);
         }
-        .cover-emoji {
-            font-size: 60px;
-            line-height: 1.2;
-            margin-bottom: 20px;
-        }
+        .cover-emoji { font-size: 60px; line-height: 1.2; margin-bottom: 20px; }
         .cover-title {
             font-weight: 900;
             font-size: 42px;
@@ -608,44 +566,15 @@ function initEventListeners() {
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
             backdrop-filter: blur(10px);
         }
-        .card-content {
-            font-size: 42px;
-            line-height: 1.7;
-        }
-        .card-content h1 {
-            font-size: 72px;
-            font-weight: 700;
-            margin-bottom: 40px;
-            line-height: 1.3;
-        }
-        .card-content h2 {
-            font-size: 56px;
-            font-weight: 600;
-            margin: 50px 0 25px 0;
-            line-height: 1.4;
-        }
-        .card-content h3 {
-            font-size: 48px;
-            font-weight: 600;
-            margin: 40px 0 20px 0;
-        }
-        .card-content p {
-            margin-bottom: 35px;
-        }
-        .card-content strong, .card-content b {
-            font-weight: 700;
-        }
-        .card-content em, .card-content i {
-            font-style: italic;
-        }
-        .card-content ul, .card-content ol {
-            margin: 30px 0;
-            padding-left: 60px;
-        }
-        .card-content li {
-            margin-bottom: 20px;
-            line-height: 1.6;
-        }
+        .card-content { font-size: 42px; line-height: 1.7; }
+        .card-content h1 { font-size: 72px; font-weight: 700; margin-bottom: 40px; line-height: 1.3; }
+        .card-content h2 { font-size: 56px; font-weight: 600; margin: 50px 0 25px 0; line-height: 1.4; }
+        .card-content h3 { font-size: 48px; font-weight: 600; margin: 40px 0 20px 0; }
+        .card-content p { margin-bottom: 35px; }
+        .card-content strong, .card-content b { font-weight: 700; }
+        .card-content em, .card-content i { font-style: italic; }
+        .card-content ul, .card-content ol { margin: 30px 0; padding-left: 60px; }
+        .card-content li { margin-bottom: 20px; line-height: 1.6; }
         .card-content blockquote {
             border-left: 8px solid #6366f1;
             padding-left: 40px;
@@ -675,12 +604,7 @@ function initEventListeners() {
             font-size: 36px;
             line-height: 1.5;
         }
-        .card-content pre code {
-            background: transparent;
-            color: inherit;
-            padding: 0;
-            font-size: inherit;
-        }
+        .card-content pre code { background: transparent; color: inherit; padding: 0; font-size: inherit; }
         .card-content img {
             max-width: 100%;
             height: auto;
@@ -689,17 +613,8 @@ function initEventListeners() {
             display: block;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
         }
-        .card-content hr {
-            border: none;
-            height: 2px;
-            background: #e2e8f0;
-            margin: 50px 0;
-        }
-        .tags-container {
-            margin-top: 50px;
-            padding-top: 30px;
-            border-top: 2px solid #e2e8f0;
-        }
+        .card-content hr { border: none; height: 2px; background: #e2e8f0; margin: 50px 0; }
+        .tags-container { margin-top: 50px; padding-top: 30px; border-top: 2px solid #e2e8f0; }
         .tag {
             display: inline-block;
             background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
@@ -729,25 +644,99 @@ function initEventListeners() {
     </div>
 </body>
 </html>`;
+}
 
-            // Download the HTML file
-            const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = 'xiaohongshu-cards.html';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+/**
+ * Download content as a file
+ * @param {string} content - File content
+ * @param {string} filename - Download filename
+ * @param {string} mimeType - MIME type
+ */
+function downloadFile(content, filename, mimeType = 'text/html') {
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
 
+/**
+ * Handle card export
+ * @param {HTMLElement} btn - Export button element
+ */
+async function handleExport(btn) {
+    const cardWrappers = elements.cardsContainer.querySelectorAll('.card-wrapper');
+
+    if (cardWrappers.length === 0) {
+        alert('没有可导出的卡片');
+        return;
+    }
+
+    const originalText = btn.textContent;
+    btn.textContent = '导出中...';
+    btn.disabled = true;
+
+    try {
+        const { cardsHtml, width, height } = collectCardsData();
+        const fullHtml = generateExportHTML(cardsHtml, width, height);
+        downloadFile(fullHtml, 'xiaohongshu-cards.html');
+    } catch (err) {
+        console.error('导出失败:', err);
+        alert('导出失败: ' + err.message);
+    } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
+function initEventListeners() {
+    elements.markdownInput.addEventListener('input', debounce(() => {
+        renderCards().catch(err => console.error('Render failed:', err));
+    }, 300));
+    elements.markdownInput.addEventListener('paste', async (e) => {
+        try {
+            await handlePaste(e);
         } catch (err) {
-            console.error('导出失败:', err);
-            alert('导出失败: ' + err.message);
-        } finally {
-            btn.textContent = originalText;
-            btn.disabled = false;
+            console.error('Paste handling failed:', err);
         }
+    });
+    
+    elements.themeSelect.addEventListener('change', (e) => switchTheme(e.target.value));
+    
+    elements.clearBtn.addEventListener('click', async () => {
+        try {
+            if (confirm('确定要清空所有内容吗？')) {
+                elements.markdownInput.value = '';
+                await renderCards();
+            }
+        } catch (err) {
+            console.error('Clear failed:', err);
+        }
+    });
+
+    elements.sampleBtn.addEventListener('click', async () => {
+        try {
+            elements.markdownInput.value = sampleMarkdown;
+            await renderCards();
+        } catch (err) {
+            console.error('Sample load failed:', err);
+        }
+    });
+
+    elements.refreshBtn.addEventListener('click', async () => {
+        try {
+            await renderCards();
+        } catch (err) {
+            console.error('Refresh failed:', err);
+        }
+    });
+    
+    elements.downloadBtn.addEventListener('click', async () => {
+        await handleExport(elements.downloadBtn);
     });
     
     elements.applyBgBtn.addEventListener('click', applyCustomBackground);
