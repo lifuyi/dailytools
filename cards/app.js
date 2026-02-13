@@ -978,6 +978,54 @@ async function handleExport(btn) {
                 }
             }
             
+            // Fix content card - ensure full content is visible
+            if (!isCover) {
+                const cardContainer = card.querySelector('.card-container');
+                const cardInner = card.querySelector('.card-inner');
+                
+                if (cardContainer) {
+                    cardContainer.style.overflow = 'visible';
+                    cardContainer.style.minHeight = 'auto';
+                }
+                if (cardInner) {
+                    cardInner.style.minHeight = 'auto';
+                    cardInner.style.overflow = 'visible';
+                }
+                
+                // Remove overflow:hidden from content card to show all content
+                card.style.overflow = 'visible';
+                card.style.minHeight = 'auto';
+                
+                // Fix code blocks - use !important to override preview styles
+                const preBlocks = card.querySelectorAll('.card-content pre');
+                preBlocks.forEach(el => {
+                    el.setAttribute('style', 
+                        el.getAttribute('style') + 
+                        '; background: #1e293b !important; color: #e2e8f0 !important; padding: 40px !important; margin: 35px 0 !important; font-size: 18px !important; overflow: visible !important; white-space: pre-wrap !important;'
+                    );
+                });
+                
+                // Fix inline code
+                const inlineCode = card.querySelectorAll('.card-content code:not(pre code)');
+                inlineCode.forEach(el => {
+                    el.setAttribute('style', 
+                        el.getAttribute('style') + 
+                        '; background: #f1f5f9 !important; color: #6366f1 !important; padding: 6px 16px !important; font-size: 16px !important;'
+                    );
+                });
+                
+                // Fix pre code
+                const preCode = card.querySelectorAll('.card-content pre code');
+                preCode.forEach(el => {
+                    el.setAttribute('style', 
+                        el.getAttribute('style') + 
+                        '; background: transparent !important; color: inherit !important;'
+                    );
+                });
+                
+                console.log('[Export] Fixed code blocks with !important styles');
+            }
+            
             const label = wrapper.querySelector('.card-label')?.textContent || `卡片_${i + 1}`;
             // Sanitize filename - remove special characters
             const sanitizedLabel = label.replace(/[^\w\u4e00-\u9fa5\s-]/g, '').replace(/\s+/g, '_');
