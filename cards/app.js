@@ -1012,24 +1012,30 @@ async function handleExport(btn) {
                 const bgColor2 = containerStyle.getPropertyValue('--bg-color-2').trim() || '#8b5cf6';
                 const direction = containerStyle.getPropertyValue('--gradient-direction').trim() || '135deg';
                 card.style.background = `linear-gradient(${direction}, ${bgColor1} 0%, ${bgColor2} 100%)`;
+            } else if (isCover) {
+                const themeCoverGradients = {
+                    'default': 'linear-gradient(180deg, #f3f3f3 0%, #f9f9f9 100%)',
+                    'playful-geometric': 'linear-gradient(135deg, #8B5CF6 0%, #F472B6 100%)',
+                    'neo-brutalism': 'linear-gradient(135deg, #FF4757 0%, #FECA57 100%)',
+                    'botanical': 'linear-gradient(135deg, #4A7C59 0%, #8FBC8F 100%)',
+                    'professional': 'linear-gradient(135deg, #2563EB 0%, #3B82F6 100%)',
+                    'retro': 'linear-gradient(135deg, #D35400 0%, #F39C12 100%)',
+                    'terminal': 'linear-gradient(135deg, #0D1117 0%, #161B22 100%)',
+                    'sketch': 'linear-gradient(135deg, #555555 0%, #888888 100%)'
+                };
+                card.style.background = themeCoverGradients[state.currentTheme] || themeCoverGradients['default'];
             } else {
-                const bg = containerStyle.getPropertyValue('background');
-                const bgImage = containerStyle.getPropertyValue('background-image');
-                if (bgImage && bgImage !== 'none') {
-                    card.style.background = bg;
-                } else {
-                    const themeBgColors = {
-                        'default': '#f3f4f6',
-                        'playful-geometric': '#fdf4ff',
-                        'neo-brutalism': '#fef2f2',
-                        'botanical': '#f0fdf4',
-                        'professional': '#eff6ff',
-                        'retro': '#fef3c7',
-                        'terminal': '#f0fdf4',
-                        'sketch': '#f3f4f6'
-                    };
-                    card.style.background = themeBgColors[state.currentTheme] || themeBgColors['default'];
-                }
+                const themeBgColors = {
+                    'default': '#ffffff',
+                    'playful-geometric': '#ffffff',
+                    'neo-brutalism': '#ffffff',
+                    'botanical': '#ffffff',
+                    'professional': '#ffffff',
+                    'retro': '#ffffff',
+                    'terminal': '#ffffff',
+                    'sketch': '#ffffff'
+                };
+                card.style.background = themeBgColors[state.currentTheme] || '#ffffff';
             }
             
             // Fix cover card inner background (the white/gray area inside cover)
