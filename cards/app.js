@@ -665,7 +665,213 @@ function downloadFile(content, filename, mimeType = 'text/html') {
 }
 
 /**
- * Handle card export
+ * Download canvas as PNG
+ * @param {HTMLCanvasElement} canvas - Canvas element
+ * @param {string} filename - Download filename
+ */
+function downloadCanvasAsPng(canvas, filename) {
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = canvas.toDataURL('image/png');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+/**
+ * Create or get export container for rendering
+ * @returns {HTMLElement} Export container element
+ */
+function getExportContainer() {
+    let container = document.getElementById('export-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'export-container';
+        // Use visibility:visible with z-index:-9999 to allow html2canvas to render while keeping it off-screen
+        container.style.cssText = 'position:fixed;left:0;top:0;z-index:-9999;visibility:visible;background:transparent;overflow:hidden;';
+        document.body.appendChild(container);
+    }
+    return container;
+}
+
+/**
+ * Get the base URL for the current page
+ * @returns {string} Base URL
+ */
+function getBaseUrl() {
+    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+    return baseUrl;
+}
+
+/**
+ * Fetch CSS content from a URL
+ * @param {string} url - CSS URL to fetch
+ * @returns {Promise<string>} CSS content
+ */
+async function fetchCssContent(url) {
+    if (!url) return '';
+    
+    // Convert relative URLs to absolute
+    if (url.startsWith('themes/') || url === 'styles.css') {
+        url = getBaseUrl() + '/' + url;
+    }
+    
+    try {
+        const response = await fetch(url);
+        return await response.text();
+    } catch (error) {
+        console.warn('[Export] Failed to fetch CSS:', url, error);
+        return '';
+    }
+}
+
+/**
+ * Inject CSS into a style element
+ * @param {string} css - CSS content
+ * @param {string} id - Unique ID for the style element
+ */
+function injectCss(css, id) {
+    let styleEl = document.getElementById(id);
+    if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = id;
+        document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = css;
+}
+
+/**
+ * Inject all needed CSS for export (base styles + theme)
+ * @returns {Promise<void>}
+ */
+async function injectExportStyles() {
+    // First inject base styles.css
+    const baseCssUrl = getBaseUrl() + '/styles.css';
+    const baseCss = await fetchCssContent(baseCssUrl);
+    if (baseCss) {
+        injectCss(baseCss, 'export-base-css');
+        console.log('[Export] Base styles injected');
+    }
+    
+    // Then inject theme CSS
+    const themeLink = document.getElementById('theme-css');
+    const themeHref = themeLink?.href || '';
+    if (themeHref) {
+        let themeUrl = themeHref;
+        // Convert relative theme URL to absolute if needed
+        if (themeUrl.startsWith('themes/')) {
+            themeUrl = getBaseUrl() + '/' + themeUrl;
+        }
+        const themeCss = await fetchCssContent(themeUrl);
+        if (themeCss) {
+            injectCss(themeCss, 'export-theme-css');
+            console.log('[Export] Theme CSS injected:', themeUrl);
+        }
+    }
+}
+
+/**
+ * Export a single card element to PNG
+ * @param {HTMLElement} cardElement - Card element to export
+ * @param {string} filename - Output filename
+ * @param {Object} options - Export options (scale, backgroundColor)
+ * @returns {Promise<boolean>} Success status
+ */
+async function exportCardToPng(cardElement, filename, options = {}) {
+    const scale = options.scale || 2;
+    const backgroundColor = options.backgroundColor || null;
+    
+    console.log(`[Export] Starting export for: ${filename}`);
+    console.log(`[Export] Card element:`, cardElement.className);
+    console.log(`[Export] Scale: ${scale}, backgroundColor: ${backgroundColor}`);
+    
+    try {
+        // Use html2canvas first, but if it fails or produces issues, try dom-to-image
+        let canvas;
+        
+        try {
+            // Try html2canvas first
+            canvas = await html2canvas(cardElement, {
+                scale: scale,
+                backgroundColor: false,
+                logging: true,
+                useCORS: true,
+                allowTaint: true,
+                removeContainer: false,
+                ignoreElements: (element) => {
+                    return element.classList?.contains('image-error');
+                },
+                onclone: (clonedDoc, clonedElement) => {
+                    console.log('[Export] Cloned element for rendering');
+                    clonedElement.style.visibility = 'visible';
+                    clonedElement.style.display = 'block';
+                    
+                    const originalStyle = window.getComputedStyle(cardElement);
+                    clonedElement.style.background = originalStyle.getPropertyValue('background');
+                    
+                    if (cardElement.classList.contains('cover-card')) {
+                        const originalInner = cardElement.querySelector('.cover-inner');
+                        const clonedInner = clonedElement.querySelector('.cover-inner');
+                        if (originalInner && clonedInner) {
+                            const innerStyle = window.getComputedStyle(originalInner);
+                            clonedInner.style.background = innerStyle.getPropertyValue('background');
+                        }
+                        
+                        const originalTitle = cardElement.querySelector('.cover-title');
+                        const clonedTitle = clonedElement.querySelector('.cover-title');
+                        if (originalTitle && clonedTitle) {
+                            const titleStyle = window.getComputedStyle(originalTitle);
+                            clonedTitle.style.background = titleStyle.getPropertyValue('background');
+                            clonedTitle.style.webkitBackgroundClip = titleStyle.getPropertyValue('webkit-background-clip');
+                            clonedTitle.style.backgroundClip = titleStyle.getPropertyValue('background-clip');
+                            clonedTitle.style.webkitTextFillColor = titleStyle.getPropertyValue('webkit-text-fill-color');
+                            clonedTitle.style.color = titleStyle.getPropertyValue('color');
+                        }
+                    }
+                    
+                    const styleIds = ['export-base-css', 'export-theme-css'];
+                    for (const id of styleIds) {
+                        const styleEl = document.getElementById(id);
+                        if (styleEl && clonedDoc.head) {
+                            const clonedStyle = styleEl.cloneNode(true);
+                            clonedStyle.id = 'cloned-' + id;
+                            clonedDoc.head.appendChild(clonedStyle);
+                        }
+                    }
+                }
+            });
+        } catch (html2canvasError) {
+            console.warn('[Export] html2canvas failed, trying dom-to-image:', html2canvasError.message);
+            // Fallback to dom-to-image which handles CSS3 better
+            canvas = await domtoimage.toCanvas(cardElement, {
+                pixelRatio: scale
+            });
+        }
+        
+        // Validate canvas content
+        const dataUrl = canvas.toDataURL('image/png');
+        console.log(`[Export] Canvas dimensions: ${canvas.width}x${canvas.height}`);
+        console.log(`[Export] DataURL length: ${dataUrl.length} bytes`);
+        
+        // Check for blank canvas
+        if (dataUrl.length < 1000) {
+            console.error(`[Export] Blank canvas detected for ${filename}`);
+            throw new Error('导出生成空白图片');
+        }
+        
+        // Download the PNG
+        downloadCanvasAsPng(canvas, filename);
+        console.log(`[Export] Successfully exported: ${filename}`);
+        
+        return true;
+    } catch (error) {
+        console.error(`[Export] Failed to export ${filename}:`, error);
+        throw error;
+    }
+}
+
+/**
+ * Handle card export - exports HTML first, then PNGs
  * @param {HTMLElement} btn - Export button element
  */
 async function handleExport(btn) {
@@ -681,9 +887,111 @@ async function handleExport(btn) {
     btn.disabled = true;
 
     try {
+        console.log('[Export] Starting export...');
+        console.log(`[Export] Found ${cardWrappers.length} cards to export`);
+        
+        // Step 1: Download HTML file first
+        console.log('[Export] Step 1: Generating HTML file...');
         const { cardsHtml, width, height } = collectCardsData();
         const fullHtml = generateExportHTML(cardsHtml, width, height);
         downloadFile(fullHtml, 'xiaohongshu-cards.html');
+        console.log('[Export] HTML file downloaded');
+        
+        // Wait a bit for HTML download to start
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Step 2: Then download PNG images
+        console.log('[Export] Step 2: Generating PNG images...');
+        
+        // Inject all CSS (base + theme) before exporting PNGs
+        await injectExportStyles();
+        
+        // Export each card as PNG
+        for (let i = 0; i < cardWrappers.length; i++) {
+            const wrapper = cardWrappers[i];
+            const card = wrapper.querySelector('.cover-card, .content-card');
+            const isCover = wrapper.querySelector('.cover-card') !== null;
+            
+            if (!card) {
+                console.warn(`[Export] No card found at index ${i}`);
+                continue;
+            }
+            
+            // Get the theme-specific background from the cards container
+            const container = elements.cardsContainer;
+            const containerStyle = window.getComputedStyle(container);
+            
+            // Check if custom background is enabled
+            const hasCustomBg = container.classList.contains('custom-bg');
+            
+            if (hasCustomBg) {
+                // Use custom gradient background
+                const bgColor1 = containerStyle.getPropertyValue('--bg-color-1').trim() || '#6366f1';
+                const bgColor2 = containerStyle.getPropertyValue('--bg-color-2').trim() || '#8b5cf6';
+                const direction = containerStyle.getPropertyValue('--gradient-direction').trim() || '135deg';
+                card.style.background = `linear-gradient(${direction}, ${bgColor1} 0%, ${bgColor2} 100%)`;
+                console.log(`[Export] Applied custom gradient background`);
+            } else {
+                // Get theme-specific background from container
+                const bg = containerStyle.getPropertyValue('background');
+                if (bg && bg !== 'none' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                    card.style.background = bg;
+                    console.log(`[Export] Applied theme background: ${bg.substring(0, 50)}...`);
+                }
+            }
+            
+            // Fix cover card inner background (the white/gray area inside cover)
+            if (isCover) {
+                const coverInner = card.querySelector('.cover-inner');
+                if (coverInner) {
+                    coverInner.style.background = '#F3F3F3';
+                }
+                
+                // Fix title area - use solid colors instead of gradient text for PNG export
+                // (html2canvas doesn't support -webkit-background-clip: text well)
+                const coverTitle = card.querySelector('.cover-title');
+                if (coverTitle) {
+                    const theme = state.currentTheme;
+                    
+                    // Map theme to solid colors (end of gradient)
+                    const themeSolidColors = {
+                        'default': '#1F2937',
+                        'playful-geometric': '#7C3AED',
+                        'neo-brutalism': '#000000',
+                        'botanical': '#1F2937',
+                        'professional': '#1E3A8A',
+                        'retro': '#8B4513',
+                        'terminal': '#39D353',
+                        'sketch': '#111827'
+                    };
+                    
+                    const solidColor = themeSolidColors[theme] || themeSolidColors['default'];
+                    
+                    // Apply solid color instead of gradient text
+                    coverTitle.style.background = 'none';
+                    coverTitle.style.webkitBackgroundClip = 'initial';
+                    coverTitle.style.backgroundClip = 'initial';
+                    coverTitle.style.webkitTextFillColor = 'initial';
+                    coverTitle.style.color = solidColor;
+                    
+                    console.log(`[Export] Applied solid title color for theme: ${theme} = ${solidColor}`);
+                }
+            }
+            
+            const label = wrapper.querySelector('.card-label')?.textContent || `卡片_${i + 1}`;
+            // Sanitize filename - remove special characters
+            const sanitizedLabel = label.replace(/[^\w\u4e00-\u9fa5\s-]/g, '').replace(/\s+/g, '_');
+            const filename = `${sanitizedLabel}.png`;
+            
+            console.log(`[Export] Exporting card ${i + 1}/${cardWrappers.length}: ${filename}`);
+            
+            await exportCardToPng(card, filename, { scale: 2 });
+            
+            // Small delay between exports
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        console.log('[Export] All exports completed successfully!');
     } catch (err) {
         console.error('导出失败:', err);
         alert('导出失败: ' + err.message);
