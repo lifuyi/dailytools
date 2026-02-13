@@ -157,6 +157,22 @@ function convertCardsToHTML(cards) {
         }
         .card-wrapper {
             position: relative;
+            display: inline-block;
+            width: var(--card-width);
+        }
+        .card-label {
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: #999;
+            background: #fff;
+            padding: 4px 12px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            white-space: nowrap;
+            z-index: 10;
         }
         .cover-card {
             width: var(--card-width);
@@ -418,11 +434,15 @@ async function exportCardsToPNG(htmlPath, outputDir) {
         throw new Error(`HTML file not found: ${htmlPath}`);
     }
     
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
+    // Validate and normalize output path to prevent path traversal
+    const normalizedOutputDir = path.normalize(outputDir);
+    const resolvedOutputDir = path.resolve(normalizedOutputDir);
+    
+    if (!fs.existsSync(resolvedOutputDir)) {
+        fs.mkdirSync(resolvedOutputDir, { recursive: true });
     }
 
-    let browser;
+    let browser = null;
     try {
         browser = await puppeteer.launch({ headless: 'new' });
         const page = await browser.newPage();
@@ -453,7 +473,7 @@ async function exportCardsToPNG(htmlPath, outputDir) {
             
             const sanitizedLabel = label.replace(/[^\w\u4e00-\u9fa5\s-]/g, '').replace(/\s+/g, '_');
             const filename = `${sanitizedLabel}.png`;
-            const outputPath = path.join(outputDir, filename);
+            const outputPath = path.join(resolvedOutputDir, filename);
             
             const boundingBox = await card.boundingBox();
             
@@ -475,7 +495,7 @@ async function exportCardsToPNG(htmlPath, outputDir) {
             console.log(`✓ Exported: ${filename}`);
         }
         
-        console.log(`\n✓ All cards exported to ${outputDir}/`);
+        console.log(`\n✓ All cards exported to ${resolvedOutputDir}/`);
     } catch (error) {
         console.error('Export failed:', error.message);
         throw error;

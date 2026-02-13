@@ -8,6 +8,7 @@
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const DEBOUNCE_DELAY = { RENDER: 300 };
+const IMAGE_ID_PREFIX = 'img_';
 
 // ============================================
 // IndexedDB Image Storage
@@ -16,6 +17,8 @@ const ImageStore = {
     db: null,
     dbName: 'CardImagesDB',
     storeName: 'images',
+    maxStorageItems: 50,
+    maxStorageBytes: 50 * 1024 * 1024, // 50MB limit
 
     async init() {
         return new Promise((resolve, reject) => {
@@ -35,6 +38,9 @@ const ImageStore = {
     },
 
     async save(id, data) {
+        // Auto-cleanup before saving if approaching limit
+        await this.autoCleanup();
+        
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([this.storeName], 'readwrite');
             const store = transaction.objectStore(this.storeName);
@@ -71,6 +77,45 @@ const ImageStore = {
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error);
         });
+    },
+
+    async clear() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.clear();
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+        });
+    },
+
+    async getStorageSize() {
+        const all = await this.getAll();
+        let totalSize = 0;
+        for (const item of all) {
+            if (item.data) {
+                totalSize += item.data.length;
+            }
+        }
+        return { count: all.length, bytes: totalSize };
+    },
+
+    async autoCleanup() {
+        const storage = await this.getStorageSize();
+        
+        // If over item limit or size limit, remove oldest items
+        if (storage.count > this.maxStorageItems || storage.bytes > this.maxStorageBytes) {
+            const all = await this.getAll();
+            // Sort by timestamp (oldest first)
+            all.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            
+            // Remove oldest 20% of items
+            const removeCount = Math.ceil(all.length * 0.2);
+            for (let i = 0; i < removeCount; i++) {
+                await this.delete(all[i].id);
+            }
+            console.log(`[ImageStore] Auto-cleanup: removed ${removeCount} old images`);
+        }
     }
 };
 
@@ -108,17 +153,6 @@ const state = {
     }
 };
 
-const themeTitleGradients = {
-    'default': 'linear-gradient(180deg, #111827 0%, #4B5563 100%)',
-    'playful-geometric': 'linear-gradient(180deg, #7C3AED 0%, #F472B6 100%)',
-    'neo-brutalism': 'linear-gradient(180deg, #000000 0%, #FF4757 100%)',
-    'botanical': 'linear-gradient(180deg, #1F2937 0%, #4A7C59 100%)',
-    'professional': 'linear-gradient(180deg, #1E3A8A 0%, #2563EB 100%)',
-    'retro': 'linear-gradient(180deg, #8B4513 0%, #D35400 100%)',
-    'terminal': 'linear-gradient(180deg, #39D353 0%, #58A6FF 100%)',
-    'sketch': 'linear-gradient(180deg, #111827 0%, #6B7280 100%)'
-};
-
 const themeConfig = {
     'default': { titleGradient: 'linear-gradient(180deg, #111827 0%, #4B5563 100%)', solidColor: '#1F2937' },
     'playful-geometric': { titleGradient: 'linear-gradient(180deg, #7C3AED 0%, #F472B6 100%)', solidColor: '#7C3AED' },
@@ -129,6 +163,12 @@ const themeConfig = {
     'terminal': { titleGradient: 'linear-gradient(180deg, #39D353 0%, #58A6FF 100%)', solidColor: '#39D353' },
     'sketch': { titleGradient: 'linear-gradient(180deg, #111827 0%, #6B7280 100%)', solidColor: '#111827' }
 };
+
+// Helper to get title gradient from themeConfig
+const themeTitleGradients = {};
+for (const [key, config] of Object.entries(themeConfig)) {
+    themeTitleGradients[key] = config.titleGradient;
+}
 
 const sampleMarkdown = `---
 title: 我的第一篇小红书
@@ -244,7 +284,7 @@ function splitContentBySeparator(body) {
 
 async function convertMarkdownToHtml(mdContent) {
     // 处理 IndexedDB 图片引用 ![img:id]
-    const imagePattern = /!\[img:([^\]]+)\]/g;
+    const imagePattern = new RegExp(`!\\[${IMAGE_ID_PREFIX}:([^\\]]+)\\]`, 'g');
     const imageMatches = [];
     
     let match;
@@ -256,9 +296,9 @@ async function convertMarkdownToHtml(mdContent) {
     for (const id of imageMatches) {
         const src = await ImageStore.get(id);
         if (src) {
-            mdContent = mdContent.replace(`![img:${id}]`, `![图片](${src})`);
+            mdContent = mdContent.replace(`![${IMAGE_ID_PREFIX}:${id}]`, `![图片](${src})`);
         } else {
-            mdContent = mdContent.replace(`![img:${id}]`, '');
+            mdContent = mdContent.replace(`![${IMAGE_ID_PREFIX}:${id}]`, '');
         }
     }
     
@@ -271,7 +311,7 @@ async function convertMarkdownToHtml(mdContent) {
         if (tags) {
             tagsHtml = '<div class="tags-container">';
             tags.forEach(tag => {
-                tagsHtml += `<span class="tag">${tag}</span>`;
+                tagsHtml += `<span class="tag">${sanitizeText(tag)}</span>`;
             });
             tagsHtml += '</div>';
         }
@@ -287,9 +327,9 @@ async function convertMarkdownToHtml(mdContent) {
 // ============================================
 
 function generateCoverHtml(metadata, theme) {
-    const emoji = metadata.emoji || '📝';
-    let title = (metadata.title || '标题').slice(0, 20);
-    let subtitle = (metadata.subtitle || '').slice(0, 20);
+    const emoji = sanitizeText(metadata.emoji) || '📝';
+    let title = sanitizeText(metadata.title || '标题').slice(0, 20);
+    let subtitle = sanitizeText(metadata.subtitle || '').slice(0, 20);
     
     const titleLen = title.length;
     let titleSize = titleLen <= 6 ? 52 : titleLen <= 10 ? 46 : titleLen <= 18 ? 36 : 28;
@@ -576,7 +616,11 @@ function generateExportHTML(cardsHtml, width, height) {
             --cover-inner-width: calc(var(--card-width) * 0.88);
             --cover-inner-height: calc(var(--card-height) * 0.91);
         }
-        .card-wrapper { position: relative; }
+        .card-wrapper {
+            position: relative;
+            display: inline-block;
+            width: var(--card-width);
+        }
         .card-label {
             position: absolute;
             top: -25px;
@@ -589,6 +633,7 @@ function generateExportHTML(cardsHtml, width, height) {
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             white-space: nowrap;
+            z-index: 10;
         }
         .cover-card {
             width: var(--card-width);
@@ -1251,13 +1296,13 @@ async function handlePaste(e) {
             const base64 = await fileToBase64(blob);
             console.log('Base64 length:', base64.length);
             
-            const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
+            const imageId = IMAGE_ID_PREFIX + Date.now() + '_' + crypto.randomUUID();
             console.log('Saving image with ID:', imageId);
             
             await ImageStore.save(imageId, base64);
             console.log('Image saved to IndexedDB');
             
-            const imageMarkdown = `\n![img:${imageId}]\n`;
+            const imageMarkdown = `\n![${IMAGE_ID_PREFIX}:${imageId}]\n`;
             insertTextAtCursor(imageMarkdown);
             await renderCards();
             console.log('Render complete');
@@ -1277,7 +1322,7 @@ async function handlePaste(e) {
         console.log('Found image in HTML:', src.substring(0, 50) + '...');
         
         if (src.startsWith('data:image/')) {
-            const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
+            const imageId = IMAGE_ID_PREFIX + Date.now() + '_' + crypto.randomUUID();
             await ImageStore.save(imageId, src);
             const imageMarkdown = `\n![img:${imageId}]\n`;
             insertTextAtCursor(imageMarkdown);
@@ -1301,9 +1346,9 @@ async function handlePaste(e) {
                 }
                 
                 const base64 = await fileToBase64(blob);
-                const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
+                const imageId = IMAGE_ID_PREFIX + Date.now() + '_' + crypto.randomUUID();
                 await ImageStore.save(imageId, base64);
-                const imageMarkdown = `\n![img:${imageId}]\n`;
+                const imageMarkdown = `\n![${IMAGE_ID_PREFIX}:${imageId}]\n`;
                 insertTextAtCursor(imageMarkdown);
                 await renderCards();
             } catch (err) {
@@ -1329,7 +1374,7 @@ async function insertImages(images) {
     const imageIds = [];
     
     for (const data of images) {
-        const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
+        const imageId = IMAGE_ID_PREFIX + Date.now() + '_' + crypto.randomUUID();
         await ImageStore.save(imageId, data);
         imageIds.push(imageId);
     }
@@ -1337,11 +1382,11 @@ async function insertImages(images) {
     let imageMarkdown = '';
     
     if (imageIds.length === 1) {
-        imageMarkdown = `\n![img:${imageIds[0]}]\n`;
+        imageMarkdown = `\n![${IMAGE_ID_PREFIX}:${imageIds[0]}]\n`;
     } else {
         imageMarkdown = `\n<div class="image-gallery gallery-horizontal">\n`;
         imageIds.forEach((id, i) => {
-            imageMarkdown += `  ![img:${id}]\n`;
+            imageMarkdown += `  ![${IMAGE_ID_PREFIX}:${id}]\n`;
         });
         imageMarkdown += `</div>\n`;
     }
