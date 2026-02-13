@@ -1008,17 +1008,27 @@ async function handleExport(btn) {
             const hasCustomBg = container.classList.contains('custom-bg');
             
             if (hasCustomBg) {
-                // Use custom gradient background
                 const bgColor1 = containerStyle.getPropertyValue('--bg-color-1').trim() || '#6366f1';
                 const bgColor2 = containerStyle.getPropertyValue('--bg-color-2').trim() || '#8b5cf6';
                 const direction = containerStyle.getPropertyValue('--gradient-direction').trim() || '135deg';
                 card.style.background = `linear-gradient(${direction}, ${bgColor1} 0%, ${bgColor2} 100%)`;
-                console.log(`[Export] Applied custom gradient background`);
             } else {
                 const bg = containerStyle.getPropertyValue('background');
-                const isEmptyBg = !bg || bg === 'none' || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)';
-                if (!isEmptyBg) {
+                const bgImage = containerStyle.getPropertyValue('background-image');
+                if (bgImage && bgImage !== 'none') {
                     card.style.background = bg;
+                } else {
+                    const themeBgColors = {
+                        'default': '#f3f4f6',
+                        'playful-geometric': '#fdf4ff',
+                        'neo-brutalism': '#fef2f2',
+                        'botanical': '#f0fdf4',
+                        'professional': '#eff6ff',
+                        'retro': '#fef3c7',
+                        'terminal': '#f0fdf4',
+                        'sketch': '#f3f4f6'
+                    };
+                    card.style.background = themeBgColors[state.currentTheme] || themeBgColors['default'];
                 }
             }
             
@@ -1043,8 +1053,6 @@ async function handleExport(btn) {
                     coverTitle.style.backgroundClip = 'initial';
                     coverTitle.style.webkitTextFillColor = 'initial';
                     coverTitle.style.color = solidColor;
-                    
-                    console.log(`[Export] Applied solid title color for theme: ${theme} = ${solidColor}`);
                 }
             }
             
