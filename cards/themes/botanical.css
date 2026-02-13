@@ -179,3 +179,26 @@
   margin: 10px 15px 10px 0;
   font-weight: 500;
 }
+
+/* Card label for live preview */
+.card-wrapper {
+  position: relative;
+  display: inline-block;
+  width: var(--card-width, 360px);
+  margin: 30px 15px;
+}
+
+.card-label {
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #999;
+  background: #fff;
+  padding: 4px 12px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  white-space: nowrap;
+  z-index: 10;
+}
