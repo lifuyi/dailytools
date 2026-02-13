@@ -3,7 +3,14 @@
  */
 
 // ============================================
-// IndexedDB 图片存储
+// Constants
+// ============================================
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const DEBOUNCE_DELAY = { RENDER: 300 };
+
+// ============================================
+// IndexedDB Image Storage
 // ============================================
 const ImageStore = {
     db: null,
@@ -68,8 +75,25 @@ const ImageStore = {
 };
 
 // ============================================
-// 配置与状态
+// HTML Sanitization (XSS Prevention)
 // ============================================
+
+function sanitizeHtml(html) {
+    const temp = document.createElement('div');
+    temp.textContent = html;
+    return temp.innerHTML;
+}
+
+function sanitizeText(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 const state = {
     currentTheme: 'default',
     customBackground: {
@@ -93,6 +117,17 @@ const themeTitleGradients = {
     'retro': 'linear-gradient(180deg, #8B4513 0%, #D35400 100%)',
     'terminal': 'linear-gradient(180deg, #39D353 0%, #58A6FF 100%)',
     'sketch': 'linear-gradient(180deg, #111827 0%, #6B7280 100%)'
+};
+
+const themeConfig = {
+    'default': { titleGradient: 'linear-gradient(180deg, #111827 0%, #4B5563 100%)', solidColor: '#1F2937' },
+    'playful-geometric': { titleGradient: 'linear-gradient(180deg, #7C3AED 0%, #F472B6 100%)', solidColor: '#7C3AED' },
+    'neo-brutalism': { titleGradient: 'linear-gradient(180deg, #000000 0%, #FF4757 100%)', solidColor: '#000000' },
+    'botanical': { titleGradient: 'linear-gradient(180deg, #1F2937 0%, #4A7C59 100%)', solidColor: '#1F2937' },
+    'professional': { titleGradient: 'linear-gradient(180deg, #1E3A8A 0%, #2563EB 100%)', solidColor: '#1E3A8A' },
+    'retro': { titleGradient: 'linear-gradient(180deg, #8B4513 0%, #D35400 100%)', solidColor: '#8B4513' },
+    'terminal': { titleGradient: 'linear-gradient(180deg, #39D353 0%, #58A6FF 100%)', solidColor: '#39D353' },
+    'sketch': { titleGradient: 'linear-gradient(180deg, #111827 0%, #6B7280 100%)', solidColor: '#111827' }
 };
 
 const sampleMarkdown = `---
@@ -176,12 +211,28 @@ function parseMarkdown(content) {
 
 function parseYaml(content) {
     const result = {};
+    if (!content || typeof content !== 'string') {
+        return result;
+    }
+    
     const lines = content.split('\n');
     
     for (const line of lines) {
-        const match = line.match(/^([\w]+):\s*(.*)$/);
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.startsWith('#')) {
+            continue;
+        }
+        
+        const match = trimmedLine.match(/^([\w]+):\s*(.*)$/);
         if (match) {
-            result[match[1]] = match[2].trim().replace(/^["']|["']$/g, '');
+            const key = match[1].trim();
+            let value = match[2].trim();
+            if (value.startsWith('"') && value.endsWith('"')) {
+                value = value.slice(1, -1);
+            } else if (value.startsWith("'") && value.endsWith("'")) {
+                value = value.slice(1, -1);
+            }
+            result[key] = value;
         }
     }
     return result;
@@ -299,10 +350,15 @@ async function renderCards() {
         elements.cardsContainer.appendChild(coverWrapper);
     }
     
-    for (let index = 0; index < cardContents.length; index++) {
+    const cardPromises = cardContents.map((content, index) => 
+        generateCardHtml(content, index + 1, cardContents.length).then(htmlContent => ({ index, htmlContent }))
+    );
+    
+    const cardResults = await Promise.all(cardPromises);
+    
+    for (const { index, htmlContent } of cardResults) {
         const cardWrapper = document.createElement('div');
         cardWrapper.className = 'card-wrapper';
-        const htmlContent = await generateCardHtml(cardContents[index], index + 1, cardContents.length);
         cardWrapper.innerHTML = `
             <div class="card-label">卡片 ${index + 1}</div>
             <div class="content-card">
@@ -333,13 +389,23 @@ function applyCustomBackground() {
         const { value: color2 } = elements.bgColor2;
         const { value: direction } = elements.gradientDirection;
         
+        if (!color1 || !color2 || !direction) {
+            console.warn('applyCustomBackground: Missing color or direction value');
+            return;
+        }
+        
+        const isValidColor = /^#([0-9A-Fa-f]{3}){1,2}$/.test(color1) && /^#([0-9A-Fa-f]{3}){1,2}$/.test(color2);
+        if (!isValidColor) {
+            alert('请输入有效的颜色值（如 #6366f1）');
+            return;
+        }
+        
         state.customBackground = { enabled: true, color1, color2, direction };
         
         elements.cardsContainer.classList.add('custom-bg');
         elements.cardsContainer.style.setProperty('--bg-color-1', color1);
         elements.cardsContainer.style.setProperty('--bg-color-2', color2);
         elements.cardsContainer.style.setProperty('--gradient-direction', direction);
-        console.log('applyCustomBackground: Applied gradient');
     } catch (error) {
         console.error('applyCustomBackground error:', error);
     }
@@ -440,11 +506,28 @@ function collectCardsData() {
  * @param {Element} clone - Cloned element to apply styles to
  */
 function applyInlineStyles(original, clone) {
-    const originalStyle = window.getComputedStyle(original);
-    const properties = Array.from(originalStyle);
+    const layoutProperties = [
+        'display', 'flex', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems', 'alignContent',
+        'grid', 'gridTemplateColumns', 'gridTemplateRows', 'gridColumn', 'gridRow',
+        'position', 'top', 'right', 'bottom', 'left',
+        'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+        'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+        'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'boxSizing', 'overflow', 'overflowX', 'overflowY',
+        'border', 'borderRadius', 'borderWidth', 'borderStyle', 'borderColor',
+        'background', 'backgroundColor', 'backgroundImage', 'backgroundSize', 'backgroundPosition',
+        'color', 'font', 'fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'textAlign',
+        'visibility', 'opacity', 'zIndex',
+        'transform', 'transition', 'animation'
+    ];
     
-    for (const prop of properties) {
-        clone.style[prop] = originalStyle.getPropertyValue(prop);
+    const originalStyle = window.getComputedStyle(original);
+    
+    for (const prop of layoutProperties) {
+        const value = originalStyle.getPropertyValue(prop);
+        if (value && value !== '' && value !== 'auto' && value !== 'none') {
+            clone.style[prop] = value;
+        }
     }
     
     const originalChildren = original.children;
@@ -932,11 +1015,10 @@ async function handleExport(btn) {
                 card.style.background = `linear-gradient(${direction}, ${bgColor1} 0%, ${bgColor2} 100%)`;
                 console.log(`[Export] Applied custom gradient background`);
             } else {
-                // Get theme-specific background from container
                 const bg = containerStyle.getPropertyValue('background');
-                if (bg && bg !== 'none' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                const isEmptyBg = !bg || bg === 'none' || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)';
+                if (!isEmptyBg) {
                     card.style.background = bg;
-                    console.log(`[Export] Applied theme background: ${bg.substring(0, 50)}...`);
                 }
             }
             
@@ -952,20 +1034,8 @@ async function handleExport(btn) {
                 const coverTitle = card.querySelector('.cover-title');
                 if (coverTitle) {
                     const theme = state.currentTheme;
-                    
-                    // Map theme to solid colors (end of gradient)
-                    const themeSolidColors = {
-                        'default': '#1F2937',
-                        'playful-geometric': '#7C3AED',
-                        'neo-brutalism': '#000000',
-                        'botanical': '#1F2937',
-                        'professional': '#1E3A8A',
-                        'retro': '#8B4513',
-                        'terminal': '#39D353',
-                        'sketch': '#111827'
-                    };
-                    
-                    const solidColor = themeSolidColors[theme] || themeSolidColors['default'];
+                    const config = themeConfig[theme] || themeConfig['default'];
+                    const solidColor = config.solidColor;
                     
                     // Apply solid color instead of gradient text
                     coverTitle.style.background = 'none';
@@ -1052,7 +1122,7 @@ async function handleExport(btn) {
 function initEventListeners() {
     elements.markdownInput.addEventListener('input', debounce(() => {
         renderCards().catch(err => console.error('Render failed:', err));
-    }, 300));
+    }, DEBOUNCE_DELAY.RENDER));
     elements.markdownInput.addEventListener('paste', async (e) => {
         try {
             await handlePaste(e);
@@ -1129,7 +1199,6 @@ function initEventListeners() {
 async function handlePaste(e) {
     const items = e.clipboardData.items;
     
-    // First try to find direct image data
     for (const item of items) {
         const type = item.type || '';
         
@@ -1153,12 +1222,22 @@ async function handlePaste(e) {
                 return;
             }
             
+            if (blob.size > MAX_IMAGE_SIZE) {
+                alert('图片过大，请使用小于10MB的图片');
+                return;
+            }
+            
+            if (!ALLOWED_IMAGE_TYPES.includes(blob.type)) {
+                alert('不支持的图片格式，请使用 JPEG、PNG、GIF 或 WebP 格式');
+                return;
+            }
+            
             console.log('Image blob type:', blob.type, 'size:', blob.size);
             
             const base64 = await fileToBase64(blob);
             console.log('Base64 length:', base64.length);
             
-            const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
             console.log('Saving image with ID:', imageId);
             
             await ImageStore.save(imageId, base64);
@@ -1184,7 +1263,7 @@ async function handlePaste(e) {
         console.log('Found image in HTML:', src.substring(0, 50) + '...');
         
         if (src.startsWith('data:image/')) {
-            const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
             await ImageStore.save(imageId, src);
             const imageMarkdown = `\n![img:${imageId}]\n`;
             insertTextAtCursor(imageMarkdown);
@@ -1192,9 +1271,23 @@ async function handlePaste(e) {
         } else if (src.startsWith('http')) {
             try {
                 const response = await fetch(src);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const blob = await response.blob();
+                
+                if (blob.size > MAX_IMAGE_SIZE) {
+                    alert('图片过大，请使用小于10MB的图片');
+                    return;
+                }
+                
+                if (!ALLOWED_IMAGE_TYPES.includes(blob.type)) {
+                    alert('不支持的图片格式，请使用 JPEG、PNG、GIF 或 WebP 格式');
+                    return;
+                }
+                
                 const base64 = await fileToBase64(blob);
-                const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
                 await ImageStore.save(imageId, base64);
                 const imageMarkdown = `\n![img:${imageId}]\n`;
                 insertTextAtCursor(imageMarkdown);
@@ -1222,7 +1315,7 @@ async function insertImages(images) {
     const imageIds = [];
     
     for (const data of images) {
-        const imageId = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        const imageId = 'img_' + Date.now() + '_' + crypto.randomUUID();
         await ImageStore.save(imageId, data);
         imageIds.push(imageId);
     }
